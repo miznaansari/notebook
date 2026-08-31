@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { AIMagicButton } from "@/components/ui/ai-magic-button";
+import { VoiceMicButton } from "@/components/ui/voice-mic-button";
 import { formatDate, cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -197,12 +198,19 @@ export function TasksModule({
         <div className="relative flex-1 w-full flex items-center">
           <input
             type="text"
-            placeholder="Quick add follow-up in Hinglish or English (e.g., Client se sandbox API key confirm karo)..."
+            placeholder="Speak or type follow-up task (e.g., Client se sandbox API key confirm karo)..."
             value={quickTitle}
             onChange={(e) => setQuickTitle(e.target.value)}
-            className="w-full h-11 pl-4 pr-32 rounded-md bg-[#F3F4F6] text-xs font-semibold text-gray-900 placeholder:text-gray-400 border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] transition"
+            className="w-full h-11 pl-4 pr-44 rounded-md bg-[#F3F4F6] text-xs font-semibold text-gray-900 placeholder:text-gray-400 border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] transition"
           />
-          <div className="absolute right-2">
+          <div className="absolute right-2 flex items-center gap-1">
+            <VoiceMicButton
+              onTranscript={(transcript) => {
+                setQuickTitle((prev) => (prev ? `${prev} ${transcript}` : transcript));
+              }}
+              variant="ghost"
+              size="sm"
+            />
             <AIMagicButton
               getText={() => quickTitle}
               onResult={(res) => setQuickTitle(res)}

@@ -20,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
 import { AIMagicButton } from "@/components/ui/ai-magic-button";
+import { VoiceMicButton } from "@/components/ui/voice-mic-button";
 import { SYSTEM_TEMPLATES } from "@/lib/templates";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -263,12 +264,19 @@ export function MeetingPrepModule({
         <div className="relative flex-1 w-full flex items-center">
           <input
             type="text"
-            placeholder="Add a new question in Hinglish or English (e.g. Kaunsa payment gateway sandbox use karna hai)..."
+            placeholder="Speak or type next meeting question (e.g. Kaunsa payment gateway sandbox use karna hai)..."
             value={quickQuestionText}
             onChange={(e) => setQuickQuestionText(e.target.value)}
-            className="w-full h-11 pl-4 pr-32 rounded-md bg-[#F3F4F6] text-xs font-semibold text-gray-900 placeholder:text-gray-400 border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] transition"
+            className="w-full h-11 pl-4 pr-44 rounded-md bg-[#F3F4F6] text-xs font-semibold text-gray-900 placeholder:text-gray-400 border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] transition"
           />
-          <div className="absolute right-2">
+          <div className="absolute right-2 flex items-center gap-1">
+            <VoiceMicButton
+              onTranscript={(transcript) => {
+                setQuickQuestionText((prev) => (prev ? `${prev} ${transcript}` : transcript));
+              }}
+              variant="ghost"
+              size="sm"
+            />
             <AIMagicButton
               getText={() => quickQuestionText}
               onResult={(res) => setQuickQuestionText(res)}

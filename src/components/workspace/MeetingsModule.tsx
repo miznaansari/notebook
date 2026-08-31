@@ -21,6 +21,7 @@ import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { AIMagicButton } from "@/components/ui/ai-magic-button";
+import { VoiceMicButton } from "@/components/ui/voice-mic-button";
 import { formatDate, formatDateTime, cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -344,14 +345,26 @@ export function MeetingsModule({
                       <span>Meeting Minutes / Key Decisions</span>
                     </h4>
 
-                    {/* Gemini AI Actions for Minutes */}
-                    <div className="flex items-center gap-2">
+                    {/* Gemini AI & Sarvam STT Actions for Minutes */}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <VoiceMicButton
+                        onTranscript={(transcript) => {
+                          const currentNotes = meeting.notes || "";
+                          const separator = currentNotes && !currentNotes.endsWith("\n") ? "\n" : "";
+                          const updated = currentNotes + separator + transcript;
+                          handleUpdateNotes(meeting.id, updated);
+                        }}
+                        variant="ghost"
+                        size="sm"
+                        label="Dictate Minutes"
+                      />
+
                       <Button
                         variant="amber"
                         size="sm"
                         onClick={async () => {
                           if (!meeting.notes || !meeting.notes.trim()) {
-                            toast.error("Please write some meeting notes first to extract tasks!");
+                            toast.error("Please write or dictate some meeting notes first to extract tasks!");
                             return;
                           }
                           toast.info("Gemini AI is extracting follow-up action items...");

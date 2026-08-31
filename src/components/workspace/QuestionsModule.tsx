@@ -29,6 +29,7 @@ import { Select } from "@/components/ui/select";
 import { Modal } from "@/components/ui/modal";
 import { Card } from "@/components/ui/card";
 import { AIMagicButton } from "@/components/ui/ai-magic-button";
+import { VoiceMicButton } from "@/components/ui/voice-mic-button";
 import { cn, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -583,21 +584,36 @@ export function QuestionsModule({
 
                   {/* Add Answer Expandable Form */}
                   <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
-                    <input
-                      type="text"
-                      placeholder="Type client answer or meeting decision here..."
-                      value={newAnswerText[q.id] || ""}
-                      onChange={(e) =>
-                        setNewAnswerText((prev) => ({
-                          ...prev,
-                          [q.id]: e.target.value,
-                        }))
-                      }
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") handleAddAnswer(q.id);
-                      }}
-                      className="flex-1 h-9 px-3 rounded-md bg-[#F3F4F6] text-xs font-medium text-gray-900 placeholder:text-gray-400 border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] transition"
-                    />
+                    <div className="relative flex-1 flex items-center">
+                      <input
+                        type="text"
+                        placeholder="Type or speak client answer (Sarvam AI STT enabled)..."
+                        value={newAnswerText[q.id] || ""}
+                        onChange={(e) =>
+                          setNewAnswerText((prev) => ({
+                            ...prev,
+                            [q.id]: e.target.value,
+                          }))
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleAddAnswer(q.id);
+                        }}
+                        className="w-full h-9 pl-3 pr-24 rounded-md bg-[#F3F4F6] text-xs font-medium text-gray-900 placeholder:text-gray-400 border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] transition"
+                      />
+                      <div className="absolute right-1">
+                        <VoiceMicButton
+                          onTranscript={(transcript) => {
+                            setNewAnswerText((prev) => ({
+                              ...prev,
+                              [q.id]: prev[q.id] ? `${prev[q.id]} ${transcript}` : transcript,
+                            }));
+                          }}
+                          variant="ghost"
+                          size="sm"
+                          showModeSelector={false}
+                        />
+                      </div>
+                    </div>
 
                     <select
                       value={newAnswerAuthor[q.id] || "Client"}
@@ -646,14 +662,24 @@ export function QuestionsModule({
               <label className="block text-xs font-bold uppercase tracking-wider text-gray-700">
                 Question *
               </label>
-              <AIMagicButton
-                getText={() => newTitle}
-                onResult={(res) => setNewTitle(res)}
-                context="Client requirement question"
-                variant="ghost"
-                size="sm"
-                allowedActions={["hinglish_to_english", "professional", "grammar", "english_to_simple"]}
-              />
+              <div className="flex items-center gap-1.5">
+                <VoiceMicButton
+                  onTranscript={(transcript) => {
+                    setNewTitle((prev) => (prev ? `${prev} ${transcript}` : transcript));
+                  }}
+                  variant="ghost"
+                  size="sm"
+                  label="Speak Question"
+                />
+                <AIMagicButton
+                  getText={() => newTitle}
+                  onResult={(res) => setNewTitle(res)}
+                  context="Client requirement question"
+                  variant="ghost"
+                  size="sm"
+                  allowedActions={["hinglish_to_english", "professional", "grammar", "english_to_simple"]}
+                />
+              </div>
             </div>
             <Input
               placeholder="e.g., Payment gateway kaunsa use karna hai?"
@@ -668,13 +694,23 @@ export function QuestionsModule({
               <label className="block text-xs font-bold uppercase tracking-wider text-gray-700">
                 Additional Details / Context
               </label>
-              <AIMagicButton
-                getText={() => newDetails}
-                onResult={(res) => setNewDetails(res)}
-                context={`Question: ${newTitle}`}
-                variant="ghost"
-                size="sm"
-              />
+              <div className="flex items-center gap-1.5">
+                <VoiceMicButton
+                  onTranscript={(transcript) => {
+                    setNewDetails((prev) => (prev ? `${prev} ${transcript}` : transcript));
+                  }}
+                  variant="ghost"
+                  size="sm"
+                  label="Dictate"
+                />
+                <AIMagicButton
+                  getText={() => newDetails}
+                  onResult={(res) => setNewDetails(res)}
+                  context={`Question: ${newTitle}`}
+                  variant="ghost"
+                  size="sm"
+                />
+              </div>
             </div>
             <Textarea
               placeholder="Optional context, references, or specific options to give the client..."

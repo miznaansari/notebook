@@ -21,10 +21,18 @@ import {
   Clock,
   Sparkles,
   Tag,
+  Save,
+  Languages,
+  Briefcase,
+  CheckCheck,
+  Smile,
+  Loader2,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { AIMagicButton } from "@/components/ui/ai-magic-button";
+import { VoiceMicButton } from "@/components/ui/voice-mic-button";
 import { cn, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -44,6 +52,15 @@ interface NotepadModuleProps {
   onNotesChange: (updatedNotes: NoteItem[]) => void;
 }
 
+interface ContextMenuState {
+  isOpen: boolean;
+  x: number;
+  y: number;
+  selectedText: string;
+  selectionStart: number;
+  selectionEnd: number;
+}
+
 export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModuleProps) {
   const [activeNoteId, setActiveNoteId] = React.useState<string | null>(
     notes.length > 0 ? notes[0].id : null
@@ -56,47 +73,64 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
   const [viewMode, setViewMode] = React.useState<"edit" | "preview" | "split">("edit");
   const [searchNotes, setSearchNotes] = React.useState("");
 
-  const activeNote = notes.find((n) => n.id === activeNoteId);
+  // Context Menu State for Right-Click AI on selected text
+  const [contextMenu, setContextMenu] = React.useState<ContextMenuState | null>(null);
+  const [isAiProcessingSelection, setIsAiProcessingSelection] = React.useState(false);
+  const [activeAiAction, setActiveAiAction] = React.useState<string | null>(null);
+
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const autoSaveTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
 
-  // Sync state when active note changes
+  // Refs to track absolute latest state without stale closure or prop-overwrite issues
+  const latestContentRef = React.useRef("");
+  const latestTitleRef = React.useRef("");
+  const latestTagsRef = React.useRef("");
+  const latestPinnedRef = React.useRef(false);
+  const latestActiveIdRef = React.useRef<string | null>(null);
+  const lastLoadedNoteIdRef = React.useRef<string | null>(null);
+
+  // Sync state ONLY when switching to a DIFFERENT active note
   React.useEffect(() => {
-    if (activeNote) {
-      setCurrentTitle(activeNote.title);
-      setCurrentContent(activeNote.content);
-      setCurrentTags(activeNote.tags || "");
-      setIsPinned(activeNote.isPinned);
-      setSaveStatus("saved");
-    } else if (notes.length > 0) {
-      setActiveNoteId(notes[0].id);
+    if (!activeNoteId) {
+      if (notes.length > 0) {
+        setActiveNoteId(notes[0].id);
+      }
+      return;
+    }
+
+    // Only load from props if we switched to a different note
+    if (activeNoteId !== lastLoadedNoteIdRef.current) {
+      const targetNote = notes.find((n) => n.id === activeNoteId);
+      if (targetNote) {
+        setCurrentTitle(targetNote.title);
+        setCurrentContent(targetNote.content);
+        setCurrentTags(targetNote.tags || "");
+        setIsPinned(targetNote.isPinned);
+        setSaveStatus("saved");
+
+        latestTitleRef.current = targetNote.title;
+        latestContentRef.current = targetNote.content;
+        latestTagsRef.current = targetNote.tags || "";
+        latestPinnedRef.current = targetNote.isPinned;
+        latestActiveIdRef.current = targetNote.id;
+        lastLoadedNoteIdRef.current = targetNote.id;
+      }
     }
   }, [activeNoteId, notes]);
 
-  // Debounced auto-save function
-  const triggerAutoSave = (
-    newTitle: string,
-    newContent: string,
-    newTags: string,
-    pinned: boolean
-  ) => {
-    if (!activeNoteId) return;
-    setSaveStatus("unsaved");
-
-    if (autoSaveTimeoutRef.current) {
-      clearTimeout(autoSaveTimeoutRef.current);
-    }
-
-    autoSaveTimeoutRef.current = setTimeout(async () => {
+  // Flush pending save immediately
+  const saveNoteToServer = React.useCallback(
+    async (noteId: string, title: string, content: string, tags: string, pinned: boolean) => {
+      if (!noteId) return;
       setSaveStatus("saving");
       try {
-        const res = await fetch(`/api/projects/${projectId}/notes/${activeNoteId}`, {
+        const res = await fetch(`/api/projects/${projectId}/notes/${noteId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            title: newTitle,
-            content: newContent,
-            tags: newTags,
+            title: title.trim() || "Untitled Note",
+            content,
+            tags,
             isPinned: pinned,
           }),
         });
@@ -105,7 +139,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
           const data = await res.json();
           setSaveStatus("saved");
           onNotesChange(
-            notes.map((n) => (n.id === activeNoteId ? { ...n, ...data.note } : n))
+            notes.map((n) => (n.id === noteId ? { ...n, ...data.note } : n))
           );
         } else {
           setSaveStatus("unsaved");
@@ -113,33 +147,222 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
       } catch (err) {
         setSaveStatus("unsaved");
       }
-    }, 800);
+    },
+    [projectId, notes, onNotesChange]
+  );
+
+  // Debounced auto-save handler (always grabs latest from refs)
+  const scheduleAutoSave = React.useCallback(() => {
+    setSaveStatus("unsaved");
+    if (autoSaveTimeoutRef.current) {
+      clearTimeout(autoSaveTimeoutRef.current);
+    }
+
+    autoSaveTimeoutRef.current = setTimeout(() => {
+      if (latestActiveIdRef.current) {
+        saveNoteToServer(
+          latestActiveIdRef.current,
+          latestTitleRef.current,
+          latestContentRef.current,
+          latestTagsRef.current,
+          latestPinnedRef.current
+        );
+      }
+    }, 1200);
+  }, [saveNoteToServer]);
+
+  // Clean up and flush on unmount or tab close
+  React.useEffect(() => {
+    return () => {
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Keyboard shortcut Ctrl+S / Cmd+S & Escape to close context menu
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setContextMenu(null);
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+        e.preventDefault();
+        if (latestActiveIdRef.current) {
+          if (autoSaveTimeoutRef.current) clearTimeout(autoSaveTimeoutRef.current);
+          saveNoteToServer(
+            latestActiveIdRef.current,
+            latestTitleRef.current,
+            latestContentRef.current,
+            latestTagsRef.current,
+            latestPinnedRef.current
+          );
+          toast.success("Note saved!");
+        }
+      }
+    };
+
+    const handleClickOutside = () => {
+      setContextMenu(null);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("click", handleClickOutside);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("click", handleClickOutside);
+    };
+  }, [saveNoteToServer]);
+
+  // Handle Right Click on Textarea
+  const handleContextMenu = (e: React.MouseEvent<HTMLTextAreaElement>) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const selectedText = currentContent.substring(start, end).trim();
+
+    if (selectedText.length > 0) {
+      e.preventDefault(); // Intercept browser default context menu
+
+      // Screen boundary detection
+      const menuWidth = 280;
+      const menuHeight = 320;
+      const x = Math.min(e.clientX, window.innerWidth - menuWidth - 10);
+      const y = Math.min(e.clientY, window.innerHeight - menuHeight - 10);
+
+      setContextMenu({
+        isOpen: true,
+        x: Math.max(10, x),
+        y: Math.max(10, y),
+        selectedText,
+        selectionStart: start,
+        selectionEnd: end,
+      });
+    } else {
+      // If no text selected, close custom menu and let native menu work
+      setContextMenu(null);
+    }
+  };
+
+  // Execute AI action on ONLY the selected text range
+  const handleAiActionOnSelection = async (action: string) => {
+    if (!contextMenu || !contextMenu.selectedText) return;
+
+    setIsAiProcessingSelection(true);
+    setActiveAiAction(action);
+
+    try {
+      const res = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action,
+          text: contextMenu.selectedText,
+          context: `Selection in Note: "${currentTitle}"`,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.result) {
+        const replacementText = data.result;
+        const before = currentContent.substring(0, contextMenu.selectionStart);
+        const after = currentContent.substring(contextMenu.selectionEnd);
+        const newFullContent = before + replacementText + after;
+
+        // Update state and mutable ref
+        setCurrentContent(newFullContent);
+        latestContentRef.current = newFullContent;
+        scheduleAutoSave();
+
+        toast.success(`Selected text updated with Gemini AI!`);
+        setContextMenu(null);
+
+        // Reselect replaced text in textarea
+        setTimeout(() => {
+          if (textareaRef.current) {
+            textareaRef.current.focus();
+            textareaRef.current.setSelectionRange(
+              contextMenu.selectionStart,
+              contextMenu.selectionStart + replacementText.length
+            );
+          }
+        }, 50);
+      } else {
+        toast.error(data.error || "Gemini AI processing failed");
+      }
+    } catch (err) {
+      toast.error("Failed to process selection with AI");
+    } finally {
+      setIsAiProcessingSelection(false);
+      setActiveAiAction(null);
+    }
   };
 
   const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setCurrentTitle(val);
-    triggerAutoSave(val, currentContent, currentTags, isPinned);
+    latestTitleRef.current = val;
+    scheduleAutoSave();
   };
 
   const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     setCurrentContent(val);
-    triggerAutoSave(currentTitle, val, currentTags, isPinned);
+    latestContentRef.current = val;
+    scheduleAutoSave();
   };
 
   const handleTagsChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setCurrentTags(val);
-    triggerAutoSave(currentTitle, currentContent, val, isPinned);
+    latestTagsRef.current = val;
+    scheduleAutoSave();
   };
 
   const handleTogglePin = async () => {
     if (!activeNoteId) return;
     const newPinned = !isPinned;
     setIsPinned(newPinned);
-    triggerAutoSave(currentTitle, currentContent, currentTags, newPinned);
+    latestPinnedRef.current = newPinned;
+    if (autoSaveTimeoutRef.current) clearTimeout(autoSaveTimeoutRef.current);
+    await saveNoteToServer(
+      activeNoteId,
+      latestTitleRef.current,
+      latestContentRef.current,
+      latestTagsRef.current,
+      newPinned
+    );
     toast.success(newPinned ? "Note pinned to top" : "Note unpinned");
+  };
+
+  const handleManualSave = () => {
+    if (!activeNoteId) return;
+    if (autoSaveTimeoutRef.current) clearTimeout(autoSaveTimeoutRef.current);
+    saveNoteToServer(
+      activeNoteId,
+      latestTitleRef.current,
+      latestContentRef.current,
+      latestTagsRef.current,
+      latestPinnedRef.current
+    );
+    toast.success("Note saved to database!");
+  };
+
+  const handleSelectNote = (noteId: string) => {
+    if (noteId === activeNoteId) return;
+    // Save current note before switching
+    if (activeNoteId && saveStatus === "unsaved") {
+      saveNoteToServer(
+        activeNoteId,
+        latestTitleRef.current,
+        latestContentRef.current,
+        latestTagsRef.current,
+        latestPinnedRef.current
+      );
+    }
+    setActiveNoteId(noteId);
   };
 
   const handleCreateNote = async () => {
@@ -157,6 +380,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
       if (res.ok) {
         const data = await res.json();
         onNotesChange([data.note, ...notes]);
+        lastLoadedNoteIdRef.current = null;
         setActiveNoteId(data.note.id);
         toast.success("New note created");
       }
@@ -178,6 +402,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
         const updated = notes.filter((n) => n.id !== id);
         onNotesChange(updated);
         if (activeNoteId === id) {
+          lastLoadedNoteIdRef.current = null;
           setActiveNoteId(updated.length > 0 ? updated[0].id : null);
         }
         toast.success("Note deleted");
@@ -203,7 +428,8 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
       currentContent.substring(end);
 
     setCurrentContent(newContent);
-    triggerAutoSave(currentTitle, newContent, currentTags, isPinned);
+    latestContentRef.current = newContent;
+    scheduleAutoSave();
 
     setTimeout(() => {
       textarea.focus();
@@ -243,7 +469,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
   const charCount = currentContent.length;
 
   return (
-    <div className="flex flex-col lg:flex-row min-h-[calc(100vh-220px)] bg-white">
+    <div className="flex flex-col lg:flex-row min-h-[calc(100vh-220px)] bg-white relative">
       {/* Left Note Index Column */}
       <div className="w-full lg:w-80 border-r-2 border-gray-200 bg-[#F3F4F6] flex flex-col shrink-0">
         <div className="p-4 border-b-2 border-gray-200 bg-white">
@@ -295,7 +521,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
               return (
                 <div
                   key={note.id}
-                  onClick={() => setActiveNoteId(note.id)}
+                  onClick={() => handleSelectNote(note.id)}
                   className={cn(
                     "group p-3.5 rounded-lg cursor-pointer transition-all duration-200 select-none relative",
                     isSelected
@@ -342,7 +568,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
       </div>
 
       {/* Main Notepad Area */}
-      {activeNote ? (
+      {activeNoteId ? (
         <div className="flex-1 flex flex-col bg-white">
           {/* Note Controls Top Bar */}
           <div className="p-4 border-b-2 border-gray-200 flex flex-wrap items-center justify-between gap-3 bg-white">
@@ -368,7 +594,16 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
 
             {/* Auto-save badge & actions */}
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs font-bold flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-gray-100 text-gray-700 select-none">
+              <span
+                onClick={handleManualSave}
+                title="Click to save now (or press Ctrl+S)"
+                className={cn(
+                  "text-xs font-bold flex items-center gap-1.5 px-2.5 py-1 rounded-md select-none cursor-pointer transition",
+                  saveStatus === "saved" && "bg-emerald-50 text-emerald-800",
+                  saveStatus === "saving" && "bg-blue-50 text-blue-800",
+                  saveStatus === "unsaved" && "bg-amber-50 text-amber-900 hover:bg-amber-100"
+                )}
+              >
                 {saveStatus === "saved" && (
                   <>
                     <Check className="w-3.5 h-3.5 text-[#10B981]" strokeWidth={3} />
@@ -383,21 +618,53 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
                 )}
                 {saveStatus === "unsaved" && (
                   <>
-                    <span className="w-2 h-2 rounded-full bg-[#F59E0B]" />
-                    <span>Unsaved</span>
+                    <Save className="w-3.5 h-3.5 text-[#F59E0B]" />
+                    <span>Save (Ctrl+S)</span>
                   </>
                 )}
               </span>
+
+              {/* Sarvam AI Real-Time Live Voice Dictation (STT) */}
+              <VoiceMicButton
+                onTranscript={(transcript) => {
+                  const textarea = textareaRef.current;
+                  if (textarea) {
+                    const start = textarea.selectionStart;
+                    const end = textarea.selectionEnd;
+                    const before = currentContent.substring(0, start);
+                    const after = currentContent.substring(end);
+                    const separator = before && !before.endsWith("\n") && !before.endsWith(" ") ? " " : "";
+                    const newContent = before + separator + transcript + after;
+                    setCurrentContent(newContent);
+                    latestContentRef.current = newContent;
+                    scheduleAutoSave();
+                    setTimeout(() => {
+                      textarea.focus();
+                      textarea.setSelectionRange(start + separator.length + transcript.length, start + separator.length + transcript.length);
+                    }, 50);
+                  } else {
+                    const separator = currentContent && !currentContent.endsWith("\n") ? "\n\n" : "";
+                    const newContent = currentContent + separator + transcript;
+                    setCurrentContent(newContent);
+                    latestContentRef.current = newContent;
+                    scheduleAutoSave();
+                  }
+                }}
+                variant="amber"
+                size="sm"
+                label="Voice (Live Hinglish)"
+              />
 
               {/* Gemini AI Assistant */}
               <AIMagicButton
                 getText={() => currentContent}
                 onResult={(aiText) => {
                   setCurrentContent(aiText);
-                  triggerAutoSave(currentTitle, aiText, currentTags, isPinned);
+                  latestContentRef.current = aiText;
+                  scheduleAutoSave();
                 }}
                 context={`Project Note: ${currentTitle}`}
-                variant="amber"
+                variant="secondary"
                 size="sm"
               />
 
@@ -546,7 +813,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
             {(viewMode === "edit" || viewMode === "split") && (
               <div
                 className={cn(
-                  "flex-1 flex flex-col p-4 sm:p-6",
+                  "flex-1 flex flex-col p-4 sm:p-6 relative",
                   viewMode === "split" && "border-r-2 border-gray-200 md:w-1/2"
                 )}
               >
@@ -554,7 +821,8 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
                   ref={textareaRef}
                   value={currentContent}
                   onChange={handleContentChange}
-                  placeholder="Start writing project notes, client ideas, requirements, technical snippets, meeting thoughts..."
+                  onContextMenu={handleContextMenu}
+                  placeholder="Start writing project notes, client ideas, requirements, technical snippets, meeting thoughts... Tip: Select any text and right-click to apply Gemini AI!"
                   className="w-full flex-1 p-4 rounded-lg bg-[#F3F4F6] text-gray-900 font-mono text-sm leading-relaxed border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] resize-none min-h-[400px]"
                 />
               </div>
@@ -586,8 +854,9 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
               <span>{wordCount} words</span>
               <span>{charCount} characters</span>
             </div>
-            <div className="flex items-center gap-2">
-              <span>Auto-saves continuously to MySQL</span>
+            <div className="flex items-center gap-3">
+              <span className="hidden sm:inline text-gray-400">💡 Select text + Right Click for Gemini AI</span>
+              <span>Press <kbd className="px-1.5 py-0.5 rounded bg-gray-200 text-gray-800 text-[10px]">Ctrl+S</kbd> to save anytime</span>
             </div>
           </div>
         </div>
@@ -609,6 +878,110 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
             >
               Create New Note
             </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Right-Click AI Menu on Selected Text */}
+      {contextMenu && contextMenu.isOpen && (
+        <div
+          style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}
+          className="fixed z-50 w-72 bg-[#111827] text-white rounded-xl border-2 border-gray-700 p-2 shadow-none animate-in fade-in zoom-in-95 duration-100 select-none"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Header with selected snippet preview */}
+          <div className="px-3 py-2 border-b border-gray-800 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
+              <div className="min-w-0">
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-400 block">
+                  Gemini AI on Selection
+                </span>
+                <span className="text-xs text-gray-300 font-medium truncate block max-w-[180px]">
+                  "{contextMenu.selectedText}"
+                </span>
+              </div>
+            </div>
+            <button
+              onClick={() => setContextMenu(null)}
+              className="p-1 text-gray-400 hover:text-white rounded"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {/* AI Action Options */}
+          <div className="py-1.5 space-y-1">
+            {[
+              {
+                id: "hinglish_to_english",
+                label: "Translate Hinglish → English",
+                desc: "Convert selected Hindi/Hinglish to English",
+                icon: Languages,
+                color: "text-blue-400",
+              },
+              {
+                id: "professional",
+                label: "Company Standard / Professional",
+                desc: "Make selection formal & corporate",
+                icon: Briefcase,
+                color: "text-purple-400",
+              },
+              {
+                id: "grammar",
+                label: "Fix Grammar & Spelling",
+                desc: "Fix typos & errors in selection",
+                icon: CheckCheck,
+                color: "text-emerald-400",
+              },
+              {
+                id: "english_to_simple",
+                label: "Simplify for Client",
+                desc: "Explain in plain English",
+                icon: Smile,
+                color: "text-amber-400",
+              },
+              {
+                id: "summarize",
+                label: "Summarize Selection",
+                desc: "Condense selected paragraph",
+                icon: FileText,
+                color: "text-rose-400",
+              },
+            ].map((action) => {
+              const Icon = action.icon;
+              const isCurrentAction = isAiProcessingSelection && activeAiAction === action.id;
+              return (
+                <button
+                  key={action.id}
+                  disabled={isAiProcessingSelection}
+                  onClick={() => handleAiActionOnSelection(action.id)}
+                  className="w-full text-left p-2 rounded-lg hover:bg-gray-800 transition-all flex items-start gap-2.5 group cursor-pointer disabled:opacity-50"
+                >
+                  <div className={cn("p-1 rounded bg-gray-800 group-hover:bg-gray-700 transition shrink-0 mt-0.5", action.color)}>
+                    {isCurrentAction ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400" />
+                    ) : (
+                      <Icon className="w-3.5 h-3.5" />
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-gray-100 group-hover:text-amber-300 leading-tight">
+                      {action.label}
+                    </div>
+                    <div className="text-[10px] text-gray-400 font-medium truncate mt-0.5">
+                      {action.desc}
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Footer status */}
+          <div className="px-3 py-1.5 border-t border-gray-800 text-[10px] text-gray-400 font-medium flex items-center justify-between">
+            <span>Only selected text will be replaced</span>
+            <span className="text-[9px] bg-gray-800 px-1.5 py-0.5 rounded text-gray-300">Esc to close</span>
           </div>
         </div>
       )}
