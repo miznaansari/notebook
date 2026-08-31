@@ -409,7 +409,7 @@ export function MeetingsModule({
                         context={`Meeting: ${meeting.title}`}
                         variant="ghost"
                         size="sm"
-                        allowedActions={["hinglish_to_english", "professional", "grammar", "summarize", "english_to_simple"]}
+                        allowedActions={["hinglish_to_english", "professional", "make_short", "grammar", "summarize", "english_to_simple"]}
                       />
                     </div>
                   </div>

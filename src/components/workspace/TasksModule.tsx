@@ -217,7 +217,7 @@ export function TasksModule({
               context="Project Follow-up Action Item"
               variant="ghost"
               size="sm"
-              allowedActions={["hinglish_to_english", "professional", "grammar", "english_to_simple"]}
+              allowedActions={["hinglish_to_english", "professional", "make_short", "grammar", "english_to_simple"]}
             />
           </div>
         </div>

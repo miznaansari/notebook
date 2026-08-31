@@ -39,6 +39,7 @@ import {
   Highlighter,
   Strikethrough,
   Search,
+  Scissors,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -1912,11 +1913,26 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
 
               <button
                 type="button"
+                onClick={() => handleAiActionOnSelection("make_short")}
+                disabled={isAiProcessingSelection}
+                className="px-2 py-1 rounded bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 text-xs font-bold flex items-center gap-1 transition"
+                title="Make selection shorter and concise"
+              >
+                {isAiProcessingSelection && activeAiAction === "make_short" ? (
+                  <Loader2 className="w-3 h-3 animate-spin text-rose-400" />
+                ) : (
+                  <Scissors className="w-3 h-3 text-rose-400" />
+                )}
+                <span>Shorten</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => handleAiActionOnSelection("professional")}
                 disabled={isAiProcessingSelection}
                 className="px-2 py-1 rounded bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 text-xs font-bold flex items-center gap-1 transition"
               >
-                {isAiProcessingSelection ? (
+                {isAiProcessingSelection && activeAiAction === "professional" ? (
                   <Loader2 className="w-3 h-3 animate-spin" />
                 ) : (
                   <Sparkles className="w-3 h-3 text-amber-400" />
@@ -1958,6 +1974,13 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
               <div className="py-1.5 space-y-1">
                 {[
                   {
+                    id: "make_short",
+                    label: "Make Shorter (Short Version)",
+                    desc: "Isko aur short, concise & punchy kar do",
+                    icon: Scissors,
+                    color: "text-rose-400",
+                  },
+                  {
                     id: "hinglish_to_english",
                     label: "Translate Hinglish → English",
                     desc: "Convert Hindi/Hinglish to English",
@@ -1990,7 +2013,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
                     label: "Summarize Selection",
                     desc: "Crisp bullet points summary",
                     icon: FileText,
-                    color: "text-rose-400",
+                    color: "text-indigo-400",
                   },
                 ].map((action) => {
                   const Icon = action.icon;

@@ -12,6 +12,7 @@ import {
   ChevronDown,
   Loader2,
   Smile,
+  Scissors,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -30,6 +31,7 @@ export interface AIMagicButtonProps {
     | "hinglish_to_english"
     | "english_to_simple"
     | "summarize"
+    | "make_short"
     | "suggest_answer"
   >;
 }
@@ -46,6 +48,7 @@ export function AIMagicButton({
     "professional",
     "hinglish_to_english",
     "english_to_simple",
+    "make_short",
     "summarize",
   ],
 }: AIMagicButtonProps) {
@@ -130,11 +133,18 @@ export function AIMagicButton({
       color: "text-amber-600",
     },
     {
+      id: "make_short",
+      label: "Make Shorter (Short Version)",
+      desc: "Condense & shorten text to be concise & punchy",
+      icon: Scissors,
+      color: "text-rose-600",
+    },
+    {
       id: "summarize",
       label: "Summarize into Key Points",
       desc: "Extracts crisp bullet-point takeaways",
       icon: FileText,
-      color: "text-rose-600",
+      color: "text-amber-600",
     },
     {
       id: "suggest_answer",

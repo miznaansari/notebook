@@ -45,6 +45,12 @@ export async function POST(req: NextRequest) {
         systemInstruction = "You are an executive assistant. Produce a clean, structured bullet-point summary highlighting decisions made, current blockers, and next steps.";
         break;
 
+      case "make_short":
+      case "shorten":
+        prompt = `Please shorten the following text significantly to make it very concise, punchy, and brief while strictly preserving all essential facts, decisions, and core meaning. Eliminate wordiness, filler phrases, and redundancy:\n\n${text}`;
+        systemInstruction = "You are an expert editor specializing in brevity and clarity. Condense the text into a clean, short, impactful version. Return only the shortened text directly without preamble or quotes.";
+        break;
+
       case "suggest_answer":
         prompt = `For this client question in a web/software project:\nQuestion: "${text}"\nContext: "${context || ""}"\n\nSuggest a recommended, industry standard, best-practice answer and clarification to propose to the client. Keep it concise (2-4 sentences).`;
         systemInstruction = "You are a software architect and consultant. Provide a crisp, practical, best-practice recommendation.";
