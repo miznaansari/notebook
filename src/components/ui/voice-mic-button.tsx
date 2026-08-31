@@ -9,7 +9,7 @@ import { toast } from "sonner";
 export interface VoiceMicButtonProps {
   onTranscript: (finalText: string) => void;
   onInterimTranscript?: (interimText: string) => void;
-  variant?: "primary" | "secondary" | "amber" | "emerald" | "outline" | "ghost";
+  variant?: "rose" | "primary" | "secondary" | "amber" | "emerald" | "outline" | "ghost" | "gradient";
   size?: "sm" | "md" | "lg";
   className?: string;
   defaultMode?: "codemix" | "translate" | "transcribe";
@@ -20,11 +20,11 @@ export interface VoiceMicButtonProps {
 export function VoiceMicButton({
   onTranscript,
   onInterimTranscript,
-  variant = "amber",
+  variant = "rose",
   size = "sm",
   className,
   defaultMode = "codemix",
-  label,
+  label = "Voice (Live)",
   showModeSelector = true,
 }: VoiceMicButtonProps) {
   const [isRecording, setIsRecording] = React.useState(false);
@@ -70,7 +70,6 @@ export function VoiceMicButton({
       };
 
       mediaRecorder.onstop = async () => {
-        // Stop all audio tracks
         stream.getTracks().forEach((track) => track.stop());
 
         if (audioChunksRef.current.length === 0) return;
@@ -78,7 +77,7 @@ export function VoiceMicButton({
         await handleSendToSarvam(audioBlob);
       };
 
-      // Real-time Live Speech Recognition (Live Typing as you speak)
+      // Real-time Live Speech Recognition
       const SpeechRecognition =
         (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
@@ -171,7 +170,6 @@ export function VoiceMicButton({
         onTranscript(data.transcript.trim());
         toast.success("✅ Voice transcribed into Hinglish!");
       } else if (liveInterimSnippet) {
-        // Fallback to live interim snippet if audio API had empty result
         onTranscript(liveInterimSnippet);
         toast.success("✅ Voice captured from live speech!");
       } else {
@@ -199,51 +197,48 @@ export function VoiceMicButton({
   return (
     <div className="relative inline-flex items-center" ref={dropdownRef}>
       {isRecording ? (
-        <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={stopRecording}
-            className="h-8 px-3 rounded-md bg-[#EF4444] hover:bg-[#DC2626] text-white text-xs font-bold flex items-center gap-2 animate-pulse cursor-pointer select-none transition-all"
-            title="Click to stop and finalize with Sarvam AI"
-          >
-            <Radio className="w-3.5 h-3.5 animate-spin" />
-            <span>Live ({formatTimer(recordingSeconds)})</span>
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={stopRecording}
+          className="h-8 px-3 rounded-lg bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white text-xs font-bold flex items-center gap-2 shadow-sm shadow-red-500/30 animate-pulse cursor-pointer select-none transition-all"
+          title="Click to stop and finalize with Sarvam AI"
+        >
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
+          </span>
+          <span>Live ({formatTimer(recordingSeconds)})</span>
+          <span className="text-[10px] bg-white/20 px-1 py-0.2 rounded uppercase font-semibold">Stop</span>
+        </button>
       ) : isProcessing ? (
         <button
           type="button"
           disabled
-          className="h-8 px-3 rounded-md bg-[#F59E0B] text-amber-950 text-xs font-bold flex items-center gap-2 cursor-wait select-none opacity-90"
+          className="h-8 px-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold flex items-center gap-2 cursor-wait select-none"
         >
-          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          <span>Sarvam AI...</span>
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-600" />
+          <span>Processing Voice...</span>
         </button>
       ) : (
-        <div className="inline-flex items-center rounded-md overflow-hidden">
-          <Button
+        <div className="inline-flex items-center rounded-lg shadow-xs overflow-hidden border border-rose-200 bg-rose-50/70 hover:bg-rose-100/80 transition-colors">
+          <button
             type="button"
-            variant={variant}
-            size={size}
             onClick={startRecording}
-            className={cn("gap-1.5 text-xs select-none", showModeSelector && "rounded-r-none pr-2", className)}
+            className={cn(
+              "h-8 px-2.5 text-xs font-semibold text-rose-700 flex items-center gap-1.5 cursor-pointer transition-colors select-none",
+              className
+            )}
             title="Real-Time Voice Dictation (Speak Hindi -> Generates Hinglish in real-time)"
           >
-            <Mic className="w-3.5 h-3.5 text-current" />
-            {label ? <span>{label}</span> : <span className="hidden sm:inline">Voice (Live Hinglish)</span>}
-          </Button>
+            <Mic className="w-3.5 h-3.5 text-rose-600 shrink-0" strokeWidth={2.2} />
+            <span>{label}</span>
+          </button>
 
           {showModeSelector && (
             <button
               type="button"
               onClick={() => setIsMenuOpen((prev) => !prev)}
-              className={cn(
-                "h-8 px-1.5 rounded-r-md border-l border-black/10 flex items-center justify-center transition-all cursor-pointer",
-                variant === "amber" && "bg-[#F59E0B] text-amber-950 hover:bg-[#D97706]",
-                variant === "primary" && "bg-[#3B82F6] text-white hover:bg-[#2563EB]",
-                variant === "secondary" && "bg-[#F3F4F6] text-gray-800 hover:bg-gray-200",
-                variant === "ghost" && "bg-transparent hover:bg-gray-100 text-gray-700"
-              )}
+              className="h-8 px-1.5 border-l border-rose-200 text-rose-600 hover:text-rose-800 hover:bg-rose-200/50 flex items-center justify-center transition-colors cursor-pointer"
               title="Change Voice Mode"
             >
               <ChevronDown className="w-3 h-3" />
@@ -252,32 +247,33 @@ export function VoiceMicButton({
         </div>
       )}
 
-      {/* Mode Selector Dropdown */}
+      {/* Mode Selector Dropdown (Light, Modern Card) */}
       {isMenuOpen && (
-        <div className="absolute right-0 top-full mt-1.5 z-50 w-72 bg-[#111827] text-white rounded-xl border-2 border-gray-700 p-2 shadow-none animate-in fade-in select-none">
-          <div className="px-2.5 py-1.5 border-b border-gray-800 text-[10px] font-extrabold uppercase tracking-wider text-amber-400">
-            Sarvam AI Live Speech Mode
+        <div className="absolute right-0 top-full mt-1.5 z-50 w-72 bg-white text-gray-900 rounded-xl border border-gray-200 p-1.5 shadow-xl animate-in fade-in zoom-in-95 select-none">
+          <div className="px-2.5 py-1.5 border-b border-gray-100 text-[10px] font-extrabold uppercase tracking-wider text-rose-600 flex items-center justify-between">
+            <span>Sarvam AI Speech Mode</span>
+            <Sparkles className="w-3 h-3 text-rose-500" />
           </div>
 
           <div className="py-1 space-y-1">
             {[
               {
                 id: "codemix",
-                label: "Speak Hindi → Live Hinglish (Default)",
-                desc: "Live real-time typing of Hindi in Roman/English alphabet",
-                tag: "Recommended",
+                label: "Speak Hindi → Live Hinglish",
+                desc: "Real-time typing of Hindi in Roman/English alphabet",
+                badge: "Default",
               },
               {
                 id: "translate",
-                label: "Speak Hindi → Translate to English",
+                label: "Speak Hindi → English",
                 desc: "Translates Hindi voice directly into formal English",
-                tag: "Translate",
+                badge: "Translate",
               },
               {
                 id: "transcribe",
                 label: "Devanagari Hindi (हिंदी)",
                 desc: "Transcribes Hindi in traditional Devanagari script",
-                tag: "Devanagari",
+                badge: "Hindi",
               },
             ].map((item) => (
               <button
@@ -288,14 +284,19 @@ export function VoiceMicButton({
                   setIsMenuOpen(false);
                   toast.info(`Voice mode: ${item.label}`);
                 }}
-                className="w-full text-left p-2 rounded-lg hover:bg-gray-800 transition flex items-start justify-between gap-2 cursor-pointer"
+                className={cn(
+                  "w-full text-left p-2 rounded-lg transition-all duration-150 flex items-start justify-between gap-2 cursor-pointer group",
+                  mode === item.id ? "bg-rose-50/80 text-rose-900 font-semibold" : "hover:bg-gray-50 text-gray-700"
+                )}
               >
                 <div className="min-w-0">
-                  <div className="text-xs font-bold text-gray-100 flex items-center gap-1.5 flex-wrap">
-                    <span>{item.label}</span>
-                    {mode === item.id && <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
+                  <div className="text-xs font-bold flex items-center gap-1.5 flex-wrap">
+                    <span className={mode === item.id ? "text-rose-700" : "text-gray-900 group-hover:text-rose-600"}>
+                      {item.label}
+                    </span>
+                    {mode === item.id && <Check className="w-3.5 h-3.5 text-rose-600 shrink-0" />}
                   </div>
-                  <div className="text-[10px] text-gray-400 font-medium mt-0.5">{item.desc}</div>
+                  <div className="text-[10px] text-gray-500 font-normal mt-0.5">{item.desc}</div>
                 </div>
               </button>
             ))}

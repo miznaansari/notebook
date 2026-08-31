@@ -469,12 +469,12 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
   const charCount = currentContent.length;
 
   return (
-    <div className="flex flex-col lg:flex-row min-h-[calc(100vh-220px)] bg-white relative">
+    <div className="flex flex-col lg:flex-row h-full min-h-0 bg-white relative overflow-hidden">
       {/* Left Note Index Column */}
-      <div className="w-full lg:w-80 border-r-2 border-gray-200 bg-[#F3F4F6] flex flex-col shrink-0">
-        <div className="p-4 border-b-2 border-gray-200 bg-white">
-          <div className="flex items-center justify-between gap-2 mb-3">
-            <div className="flex items-center gap-2">
+      <div className="w-full lg:w-72 sm:w-80 border-r-2 border-gray-200 bg-[#F3F4F6] flex flex-col shrink-0 h-full overflow-hidden">
+        <div className="p-3 border-b-2 border-gray-200 bg-white shrink-0">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <div className="flex items-center gap-1.5">
               <FileText className="w-4 h-4 text-[#3B82F6]" strokeWidth={2.5} />
               <h3 className="text-xs font-extrabold uppercase tracking-wider text-gray-900">
                 Notes ({notes.length})
@@ -484,7 +484,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
               variant="primary"
               size="sm"
               onClick={handleCreateNote}
-              className="gap-1 text-xs"
+              className="gap-1 text-xs h-7 px-2"
             >
               <Plus className="w-3.5 h-3.5" strokeWidth={3} />
               <span>New Note</span>
@@ -496,12 +496,12 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
             placeholder="Filter notes by title or tags..."
             value={searchNotes}
             onChange={(e) => setSearchNotes(e.target.value)}
-            className="w-full h-9 px-3 rounded-md bg-[#F3F4F6] text-xs font-semibold text-gray-900 placeholder:text-gray-400 border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] transition-all"
+            className="w-full h-8 px-2.5 rounded-md bg-[#F3F4F6] text-xs font-semibold text-gray-900 placeholder:text-gray-400 border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] transition-all"
           />
         </div>
 
         {/* Notes Items List */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-2 max-h-[300px] lg:max-h-[calc(100vh-320px)]">
+        <div className="flex-1 overflow-y-auto p-2.5 space-y-1.5">
           {filteredNotes.length === 0 ? (
             <div className="p-6 text-center bg-white rounded-lg border-2 border-dashed border-gray-300">
               <FileText className="w-6 h-6 text-gray-400 mx-auto mb-1.5" />
@@ -650,9 +650,9 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
                     scheduleAutoSave();
                   }
                 }}
-                variant="amber"
+                variant="rose"
                 size="sm"
-                label="Voice (Live Hinglish)"
+                label="Voice (Live)"
               />
 
               {/* Gemini AI Assistant */}
@@ -822,8 +822,8 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
                   value={currentContent}
                   onChange={handleContentChange}
                   onContextMenu={handleContextMenu}
-                  placeholder="Start writing project notes, client ideas, requirements, technical snippets, meeting thoughts... Tip: Select any text and right-click to apply Gemini AI!"
-                  className="w-full flex-1 p-4 rounded-lg bg-[#F3F4F6] text-gray-900 font-mono text-sm leading-relaxed border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] resize-none min-h-[400px]"
+                  placeholder="Start writing project notes, client ideas, requirements, technical snippets, meeting thoughts... Tip: Select any text and right-click to apply AI!"
+                  className="w-full flex-1 h-full min-h-0 p-4 rounded-lg bg-[#F3F4F6] text-gray-900 font-mono text-sm leading-relaxed border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] resize-none"
                 />
               </div>
             )}
@@ -855,7 +855,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
               <span>{charCount} characters</span>
             </div>
             <div className="flex items-center gap-3">
-              <span className="hidden sm:inline text-gray-400">💡 Select text + Right Click for Gemini AI</span>
+              <span className="hidden sm:inline text-gray-400">💡 Select text + Right Click for AI</span>
               <span>Press <kbd className="px-1.5 py-0.5 rounded bg-gray-200 text-gray-800 text-[10px]">Ctrl+S</kbd> to save anytime</span>
             </div>
           </div>
@@ -895,7 +895,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
               <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
               <div className="min-w-0">
                 <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-400 block">
-                  Gemini AI on Selection
+                  AI on Selection
                 </span>
                 <span className="text-xs text-gray-300 font-medium truncate block max-w-[180px]">
                   "{contextMenu.selectedText}"

@@ -243,11 +243,13 @@ export default function WorkspacePage() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-white">
-      {/* Top Navigation */}
-      <Navbar
+    <div className="h-screen w-screen flex overflow-hidden bg-white">
+      {/* Left Projects & User Sidebar (Includes Brand & Profile) */}
+      <Sidebar
         user={user}
-        activeProject={activeProjectData}
+        projects={projects}
+        selectedProjectId={selectedProjectId}
+        onSelectProject={(id) => setSelectedProjectId(id)}
         onNewProject={() => {
           setProjectName("");
           setClientName("");
@@ -255,162 +257,144 @@ export default function WorkspacePage() {
           setProjectColor("#3B82F6");
           setIsNewProjectModalOpen(true);
         }}
-        onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
-        isSidebarOpen={isSidebarOpen}
+        isOpen={isSidebarOpen}
+        onCloseMobile={() => setIsSidebarOpen(false)}
       />
 
-      {/* Main Workspace Layout (Sidebar + Content Area) */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Left Projects Sidebar */}
-        <Sidebar
-          projects={projects}
-          selectedProjectId={selectedProjectId}
-          onSelectProject={(id) => setSelectedProjectId(id)}
-          onNewProject={() => {
-            setProjectName("");
-            setClientName("");
-            setProjectDesc("");
-            setProjectColor("#3B82F6");
-            setIsNewProjectModalOpen(true);
-          }}
-          isOpen={isSidebarOpen}
-          onCloseMobile={() => setIsSidebarOpen(false)}
-        />
-
-        {/* Right Workspace Main View */}
-        <main className="flex-1 flex flex-col overflow-y-auto bg-white">
-          {isLoadingProject ? (
-            <div className="flex-1 flex items-center justify-center p-12">
-              <div className="flex items-center gap-2 text-sm font-bold text-gray-500">
-                <Loader2 className="w-5 h-5 animate-spin text-[#3B82F6]" />
-                <span>Loading project workspace...</span>
-              </div>
+      {/* Right Main Workspace View (Full remaining height & width for children) */}
+      <main className="flex-1 flex flex-col h-screen overflow-hidden bg-white">
+        {isLoadingProject ? (
+          <div className="flex-1 flex items-center justify-center p-12">
+            <div className="flex items-center gap-2 text-sm font-bold text-gray-500">
+              <Loader2 className="w-5 h-5 animate-spin text-[#3B82F6]" />
+              <span>Loading project workspace...</span>
             </div>
-          ) : activeProjectData ? (
-            <>
-              {/* Active Project Header & Tabs Navigation */}
-              <WorkspaceHeader
-                project={activeProjectData}
-                activeTab={activeTab}
-                onTabChange={setActiveTab}
-                onEditProject={() => setIsEditProjectModalOpen(true)}
-                onDeleteProject={handleDeleteProject}
-              />
+          </div>
+        ) : activeProjectData ? (
+          <>
+            {/* Ultra-Compact Active Project Header & Tabs */}
+            <WorkspaceHeader
+              project={activeProjectData}
+              activeTab={activeTab}
+              onTabChange={setActiveTab}
+              onEditProject={() => setIsEditProjectModalOpen(true)}
+              onDeleteProject={handleDeleteProject}
+              onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
+            />
 
-              {/* Tab Contents */}
-              <div className="flex-1">
-                {activeTab === "notes" && (
-                  <NotepadModule
-                    projectId={activeProjectData.id}
-                    notes={activeProjectData.notes || []}
-                    onNotesChange={(newNotes) => {
-                      setActiveProjectData((prev: any) => ({
-                        ...prev,
-                        notes: newNotes,
-                      }));
-                    }}
-                  />
-                )}
+            {/* Children Workspace Modules (Takes 100% of remaining screen) */}
+            <div className="flex-1 overflow-y-auto bg-white">
+              {activeTab === "notes" && (
+                <NotepadModule
+                  projectId={activeProjectData.id}
+                  notes={activeProjectData.notes || []}
+                  onNotesChange={(newNotes) => {
+                    setActiveProjectData((prev: any) => ({
+                      ...prev,
+                      notes: newNotes,
+                    }));
+                  }}
+                />
+              )}
 
-                {activeTab === "questions" && (
-                  <QuestionsModule
-                    projectId={activeProjectData.id}
-                    questions={activeProjectData.questions || []}
-                    onQuestionsChange={(newQuestions) => {
-                      setActiveProjectData((prev: any) => ({
-                        ...prev,
-                        questions: newQuestions,
-                      }));
-                    }}
-                  />
-                )}
+              {activeTab === "questions" && (
+                <QuestionsModule
+                  projectId={activeProjectData.id}
+                  questions={activeProjectData.questions || []}
+                  onQuestionsChange={(newQuestions) => {
+                    setActiveProjectData((prev: any) => ({
+                      ...prev,
+                      questions: newQuestions,
+                    }));
+                  }}
+                />
+              )}
 
-                {activeTab === "meeting-prep" && (
-                  <MeetingPrepModule
-                    projectId={activeProjectData.id}
-                    projectName={activeProjectData.name}
-                    clientName={activeProjectData.clientName}
-                    questions={activeProjectData.questions || []}
-                    onQuestionsChange={(newQuestions) => {
-                      setActiveProjectData((prev: any) => ({
-                        ...prev,
-                        questions: newQuestions,
-                      }));
-                    }}
-                    onNavigateToMeetings={() => setActiveTab("meetings")}
-                    onScheduleMeetingWithQuestions={handleScheduleFromPrep}
-                  />
-                )}
+              {activeTab === "meeting-prep" && (
+                <MeetingPrepModule
+                  projectId={activeProjectData.id}
+                  projectName={activeProjectData.name}
+                  clientName={activeProjectData.clientName}
+                  questions={activeProjectData.questions || []}
+                  onQuestionsChange={(newQuestions) => {
+                    setActiveProjectData((prev: any) => ({
+                      ...prev,
+                      questions: newQuestions,
+                    }));
+                  }}
+                  onNavigateToMeetings={() => setActiveTab("meetings")}
+                  onScheduleMeetingWithQuestions={handleScheduleFromPrep}
+                />
+              )}
 
-                {activeTab === "meetings" && (
-                  <MeetingsModule
-                    projectId={activeProjectData.id}
-                    meetings={activeProjectData.meetings || []}
-                    questions={activeProjectData.questions || []}
-                    preSelectedQuestionIds={preSelectedMeetingQuestions}
-                    onMeetingsChange={(newMeetings) => {
-                      setActiveProjectData((prev: any) => ({
-                        ...prev,
-                        meetings: newMeetings,
-                      }));
-                      setPreSelectedMeetingQuestions([]);
-                    }}
-                  />
-                )}
+              {activeTab === "meetings" && (
+                <MeetingsModule
+                  projectId={activeProjectData.id}
+                  meetings={activeProjectData.meetings || []}
+                  questions={activeProjectData.questions || []}
+                  preSelectedQuestionIds={preSelectedMeetingQuestions}
+                  onMeetingsChange={(newMeetings) => {
+                    setActiveProjectData((prev: any) => ({
+                      ...prev,
+                      meetings: newMeetings,
+                    }));
+                    setPreSelectedMeetingQuestions([]);
+                  }}
+                />
+              )}
 
-                {activeTab === "tasks" && (
-                  <TasksModule
-                    projectId={activeProjectData.id}
-                    tasks={activeProjectData.tasks || []}
-                    meetings={activeProjectData.meetings || []}
-                    onTasksChange={(newTasks) => {
-                      setActiveProjectData((prev: any) => ({
-                        ...prev,
-                        tasks: newTasks,
-                      }));
-                    }}
-                  />
-                )}
+              {activeTab === "tasks" && (
+                <TasksModule
+                  projectId={activeProjectData.id}
+                  tasks={activeProjectData.tasks || []}
+                  meetings={activeProjectData.meetings || []}
+                  onTasksChange={(newTasks) => {
+                    setActiveProjectData((prev: any) => ({
+                      ...prev,
+                      tasks: newTasks,
+                    }));
+                  }}
+                />
+              )}
 
-                {activeTab === "templates" && (
-                  <TemplatesModule
-                    projectId={activeProjectData.id}
-                    onQuestionsImported={() => fetchProjectDetails(activeProjectData.id)}
-                  />
-                )}
+              {activeTab === "templates" && (
+                <TemplatesModule
+                  projectId={activeProjectData.id}
+                  onQuestionsImported={() => fetchProjectDetails(activeProjectData.id)}
+                />
+              )}
 
-                {activeTab === "export" && (
-                  <ExportModule project={activeProjectData} />
-                )}
-              </div>
-            </>
-          ) : (
-            /* Empty State when no projects exist */
-            <div className="flex-1 flex items-center justify-center p-8 text-center">
-              <div className="max-w-md">
-                <div className="w-16 h-16 rounded-lg bg-blue-100 text-[#3B82F6] flex items-center justify-center mx-auto mb-4">
-                  <FolderPlus className="w-8 h-8" strokeWidth={2.5} />
-                </div>
-                <h2 className="text-xl font-extrabold text-gray-900">
-                  Welcome to Notepad Hub!
-                </h2>
-                <p className="text-sm font-medium text-gray-600 mt-1">
-                  Create your first project workspace to start taking notes, gathering client requirements, and preparing meeting agendas.
-                </p>
-                <Button
-                  variant="primary"
-                  size="lg"
-                  onClick={() => setIsNewProjectModalOpen(true)}
-                  className="mt-6 gap-2"
-                >
-                  <FolderPlus className="w-5 h-5" />
-                  <span>Create First Project</span>
-                </Button>
-              </div>
+              {activeTab === "export" && (
+                <ExportModule project={activeProjectData} />
+              )}
             </div>
-          )}
-        </main>
-      </div>
+          </>
+        ) : (
+          /* Empty State when no projects exist */
+          <div className="flex-1 flex items-center justify-center p-8 text-center">
+            <div className="max-w-md">
+              <div className="w-16 h-16 rounded-lg bg-blue-100 text-[#3B82F6] flex items-center justify-center mx-auto mb-4">
+                <FolderPlus className="w-8 h-8" strokeWidth={2.5} />
+              </div>
+              <h2 className="text-xl font-extrabold text-gray-900">
+                Welcome to Notepad Hub!
+              </h2>
+              <p className="text-sm font-medium text-gray-600 mt-1">
+                Create your first project workspace to start taking notes, gathering client requirements, and preparing meeting agendas.
+              </p>
+              <Button
+                variant="primary"
+                size="lg"
+                onClick={() => setIsNewProjectModalOpen(true)}
+                className="mt-6 gap-2"
+              >
+                <FolderPlus className="w-5 h-5" />
+                <span>Create First Project</span>
+              </Button>
+            </div>
+          </div>
+        )}
+      </main>
 
       {/* New Project Modal */}
       <Modal

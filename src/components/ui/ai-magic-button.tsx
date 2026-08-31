@@ -163,7 +163,7 @@ export function AIMagicButton({
         ) : (
           <>
             <Sparkles className="w-3.5 h-3.5 text-amber-900" />
-            <span>Gemini AI</span>
+            <span>AI</span>
             <ChevronDown className="w-3 h-3 ml-0.5" />
           </>
         )}
@@ -172,7 +172,7 @@ export function AIMagicButton({
       {isOpen && (
         <div className="absolute right-0 top-full mt-1.5 z-50 w-72 bg-white rounded-lg border-2 border-gray-200 p-1.5 space-y-1 shadow-none transition-transform duration-150">
           <div className="px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wider text-gray-400 border-b border-gray-100 flex items-center justify-between">
-            <span>Powered by Gemini 3.5 / 3.1 Flash-Lite</span>
+            <span>AI Actions</span>
             <Sparkles className="w-3 h-3 text-amber-500" />
           </div>
 
