@@ -34,7 +34,7 @@
     font-weight: 700;
   }
 
-  /* Custom Flat Scrollbar */
+/* Custom Flat Scrollbar */
   ::-webkit-scrollbar {
     width: 8px;
     height: 8px;
@@ -49,6 +49,17 @@
   ::-webkit-scrollbar-thumb:hover {
     background: #9ca3af;
   }
+}
+
+/* Hide scrollbar utility */
+.no-scrollbar::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+.no-scrollbar {
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
 }
 
 /* Print Styles for Meeting & Project Summaries */

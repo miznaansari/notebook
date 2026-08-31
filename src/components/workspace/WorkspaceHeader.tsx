@@ -126,11 +126,11 @@ export function WorkspaceHeader({
   }, [activeTab]);
 
   return (
-    <header className="sticky top-0 z-20 w-full bg-white border-b border-gray-200 shrink-0 select-none shadow-xs">
+    <header className="sticky top-0 z-20 w-full bg-white border-b border-gray-200 shrink-0 select-none overflow-hidden">
       {/* ========================================================================= */}
       {/* 📱 MOBILE VIEW (< md): 2-Tier Clean Layout (Top Info + Swipeable Tab Strip) */}
       {/* ========================================================================= */}
-      <div className="md:hidden">
+      <div className="md:hidden overflow-hidden">
         {/* Tier 1: Mobile Project Info & Action Buttons */}
         <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 bg-white">
           <div className="flex items-center gap-2 min-w-0">
@@ -147,7 +147,7 @@ export function WorkspaceHeader({
 
             <div className="flex items-center gap-1.5 min-w-0">
               <span
-                className="w-2.5 h-2.5 rounded-full shrink-0 shadow-xs"
+                className="w-2.5 h-2.5 rounded-full shrink-0"
                 style={{ backgroundColor: project.color || "#3B82F6" }}
               />
               <h1 className="text-sm font-bold text-gray-900 truncate max-w-[140px]">
@@ -186,7 +186,7 @@ export function WorkspaceHeader({
         {/* Tier 2: Swipeable Touch Tab Strip for Mobile */}
         <div
           ref={mobileNavRef}
-          className="flex items-center gap-1 px-2 overflow-x-auto no-scrollbar scroll-smooth bg-gray-50/50 py-1"
+          className="flex items-center gap-1 px-2 overflow-x-auto overflow-y-hidden no-scrollbar scroll-smooth bg-gray-50/50 py-1"
         >
           {tabs.map((tab) => {
             const Icon = tab.icon;
@@ -233,7 +233,7 @@ export function WorkspaceHeader({
       {/* ========================================================================= */}
       {/* 💻 DESKTOP VIEW (>= md): Exact Photo Design + Placement                   */}
       {/* ========================================================================= */}
-      <div className="hidden md:flex items-center justify-between px-3 sm:px-4">
+      <div className="hidden md:flex items-center justify-between px-3 sm:px-4 overflow-hidden">
         {/* Left: Hamburger & Project Title Meta */}
         <div className="flex items-center gap-2 min-w-0 py-2">
           {onToggleSidebar && (
@@ -285,7 +285,7 @@ export function WorkspaceHeader({
         </div>
 
         {/* Right: Workspace Tabs with photo design */}
-        <nav className="flex items-center overflow-x-auto no-scrollbar">
+        <nav className="flex items-center overflow-x-auto overflow-y-hidden no-scrollbar">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -295,7 +295,7 @@ export function WorkspaceHeader({
                 type="button"
                 onClick={() => onTabChange(tab.id)}
                 className={cn(
-                  "group flex items-center gap-2 px-3 sm:px-3.5 py-3 text-xs sm:text-[13px] whitespace-nowrap transition-all duration-150 cursor-pointer border-b-2 -mb-[1px]",
+                  "group flex items-center gap-2 px-3 sm:px-3.5 py-3 text-xs sm:text-[13px] whitespace-nowrap transition-all duration-150 cursor-pointer border-b-2",
                   isActive
                     ? "bg-blue-50/70 text-blue-600 font-semibold border-blue-600"
                     : "text-slate-600 hover:text-slate-900 hover:bg-slate-50/80 font-medium border-transparent"
