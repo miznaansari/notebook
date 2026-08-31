@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Background Flat Rounded Base -->
+  <rect width="512" height="512" rx="112" fill="#111827"/>
+
+  <!-- Notebook Body -->
+  <rect x="80" y="80" width="352" height="352" rx="36" fill="#3B82F6"/>
+
+  <!-- Notebook Spine Dark Block -->
+  <path d="M80 116 C80 96 96 80 116 80 L140 80 L140 432 L116 432 C96 432 80 416 80 396 Z" fill="#1D4ED8"/>
+
+  <!-- Spine Rings / Notches -->
+  <rect x="130" y="130" width="20" height="12" rx="6" fill="#FFFFFF"/>
+  <rect x="130" y="190" width="20" height="12" rx="6" fill="#FFFFFF"/>
+  <rect x="130" y="250" width="20" height="12" rx="6" fill="#FFFFFF"/>
+  <rect x="130" y="310" width="20" height="12" rx="6" fill="#FFFFFF"/>
+  <rect x="130" y="370" width="20" height="12" rx="6" fill="#FFFFFF"/>
+
+  <!-- Note Lines (Flat White) -->
+  <rect x="180" y="140" width="160" height="16" rx="8" fill="#FFFFFF" opacity="0.9"/>
+  <rect x="180" y="180" width="110" height="14" rx="7" fill="#FFFFFF" opacity="0.6"/>
+
+  <!-- AI Gemini Star Symbol (Center-Right Badge) -->
+  <g transform="translate(300, 270)">
+    <circle cx="40" cy="40" r="54" fill="#FFFFFF"/>
+    <path d="M40 8 C40 24 56 40 72 40 C56 40 40 56 40 72 C40 56 24 40 8 40 C24 40 40 24 40 8 Z" fill="#F59E0B"/>
+    <path d="M40 18 C40 30 50 40 62 40 C50 40 40 50 40 62 C40 50 30 40 18 40 C30 40 40 30 40 18 Z" fill="#10B981"/>
+    <path d="M68 6 C68 12 74 18 80 18 C74 18 68 24 68 30 C68 24 62 18 56 18 C62 18 68 12 68 6 Z" fill="#3B82F6"/>
+  </g>
+</svg>
