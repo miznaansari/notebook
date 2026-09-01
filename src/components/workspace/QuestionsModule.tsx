@@ -581,12 +581,12 @@ export function QuestionsModule({
   };
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-6">
+    <div className="p-3 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-4 sm:space-y-6">
       {/* Top Filter and Actions Row */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 className="text-xl sm:text-2xl font-extrabold text-gray-900 tracking-tight flex items-center gap-2">
-            <HelpCircle className="w-6 h-6 text-[#3B82F6]" strokeWidth={2.5} />
+            <HelpCircle className="w-5 h-5 sm:w-6 sm:h-6 text-[#3B82F6]" strokeWidth={2.5} />
             <span>Client Questions</span>
           </h2>
           <p className="text-xs sm:text-sm font-medium text-gray-500 mt-0.5">
@@ -594,7 +594,7 @@ export function QuestionsModule({
           </p>
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap shrink-0">
+        <div className="grid grid-cols-2 sm:flex items-center gap-2 shrink-0 w-full sm:w-auto">
           {/* AI Smart Discovery Questions Generator */}
           <Button
             variant="amber"
@@ -630,7 +630,7 @@ export function QuestionsModule({
                 toast.error("Failed to generate questions");
               }
             }}
-            className="gap-1.5 text-xs h-8 px-3"
+            className="gap-1.5 text-xs h-9 sm:h-8 px-3 justify-center w-full sm:w-auto"
           >
             <Sparkles className="w-3.5 h-3.5 text-amber-900" />
             <span>AI Generate</span>
@@ -640,7 +640,7 @@ export function QuestionsModule({
             variant="primary"
             size="sm"
             onClick={() => setIsAddModalOpen(true)}
-            className="gap-1.5 text-xs h-8 px-3"
+            className="gap-1.5 text-xs h-9 sm:h-8 px-3 justify-center w-full sm:w-auto"
           >
             <Plus className="w-3.5 h-3.5" strokeWidth={3} />
             <span>Add Question</span>
@@ -649,14 +649,14 @@ export function QuestionsModule({
       </div>
 
       {/* Status Filter Cards / Pills */}
-      <div className="grid grid-cols-2 sm:grid-cols-6 gap-2.5">
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
         {[
-          { id: "ALL", label: "All Questions", count: activeQuestions.length, bg: "bg-white", activeBg: "bg-gray-900 text-white" },
-          { id: "AGENDA", label: "Meeting Agenda", count: agendaCount, bg: "bg-[#ECFDF5]", activeBg: "bg-[#059669] text-white" },
+          { id: "ALL", label: "All", count: activeQuestions.length, bg: "bg-white", activeBg: "bg-gray-900 text-white" },
+          { id: "AGENDA", label: "Agenda", count: agendaCount, bg: "bg-[#ECFDF5]", activeBg: "bg-[#059669] text-white" },
           { id: "PENDING", label: "Pending", count: pendingCount, bg: "bg-[#FFFBEB]", activeBg: "bg-[#F59E0B] text-white" },
           { id: "ASKED", label: "Asked", count: askedCount, bg: "bg-[#EFF6FF]", activeBg: "bg-[#3B82F6] text-white" },
           { id: "ANSWERED", label: "Answered", count: answeredCount, bg: "bg-[#F0FDF4]", activeBg: "bg-[#10B981] text-white" },
-          { id: "NEED_FOLLOWUP", label: "Need Follow-up", count: followUpCount, bg: "bg-[#FFF1F2]", activeBg: "bg-[#EF4444] text-white" },
+          { id: "NEED_FOLLOWUP", label: "Follow-up", count: followUpCount, bg: "bg-[#FFF1F2]", activeBg: "bg-[#EF4444] text-white" },
         ].map((tab) => {
           const isSelected = selectedStatus === tab.id;
           return (
@@ -664,25 +664,25 @@ export function QuestionsModule({
               key={tab.id}
               onClick={() => setSelectedStatus(tab.id)}
               className={cn(
-                "p-3 rounded-lg text-left transition-all duration-200 cursor-pointer select-none",
+                "p-2 sm:p-3 rounded-lg text-left transition-all duration-200 cursor-pointer select-none",
                 isSelected
                   ? tab.activeBg
                   : `${tab.bg} text-gray-800 hover:scale-[1.02]`
               )}
             >
-              <div className="text-[11px] font-bold uppercase tracking-wider opacity-80 truncate">
+              <div className="text-[10px] sm:text-[11px] font-bold uppercase tracking-wider opacity-80 truncate">
                 {tab.label}
               </div>
-              <div className="text-xl font-extrabold mt-0.5">{tab.count}</div>
+              <div className="text-lg sm:text-xl font-extrabold mt-0.5">{tab.count}</div>
             </button>
           );
         })}
       </div>
 
       {/* Search and Category Filter Bar */}
-      <div className="flex flex-col sm:flex-row items-center gap-3 bg-[#F3F4F6] p-3 rounded-lg">
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 bg-[#F3F4F6] p-2.5 sm:p-3 rounded-lg w-full max-w-full overflow-hidden">
         {/* Search */}
-        <div className="relative flex-1 w-full">
+        <div className="relative flex-1 w-full min-w-0">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input
             type="text"
@@ -694,10 +694,7 @@ export function QuestionsModule({
         </div>
 
         {/* Category Selector & Add Category Button */}
-        <div className="flex items-center gap-2 w-full sm:w-auto">
-          <span className="text-xs font-bold text-gray-600 whitespace-nowrap">
-            Category:
-          </span>
+        <div className="flex items-center gap-2 w-full sm:w-auto min-w-0">
           <select
             value={selectedCategory}
             onChange={(e) => {
@@ -707,7 +704,7 @@ export function QuestionsModule({
                 setSelectedCategory(e.target.value);
               }
             }}
-            className="h-10 px-3 rounded-md bg-white text-sm font-semibold text-gray-900 border-2 border-transparent focus:border-[#3B82F6] outline-none cursor-pointer"
+            className="flex-1 min-w-0 w-0 sm:w-48 h-10 px-3 rounded-md bg-white text-sm font-semibold text-gray-900 border-2 border-transparent focus:border-[#3B82F6] outline-none cursor-pointer truncate"
           >
             <option value="ALL">All Categories</option>
             {existingCategories.map((c) => (
@@ -723,7 +720,7 @@ export function QuestionsModule({
             variant="outline"
             size="sm"
             onClick={() => setIsCategoryModalOpen(true)}
-            className="h-10 px-3 text-xs bg-white text-blue-700 hover:bg-blue-50 border-gray-300 gap-1.5 shrink-0"
+            className="h-10 px-3 text-xs bg-white text-blue-700 hover:bg-blue-50 border-gray-300 gap-1.5 shrink-0 whitespace-nowrap"
             title="Add or manage custom categories"
           >
             <Plus className="w-3.5 h-3.5" />
@@ -793,7 +790,7 @@ export function QuestionsModule({
                         >
                           {/* Header Row */}
                           <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
-                            <div className="flex items-start gap-3 flex-1">
+                            <div className="flex items-start gap-2.5 sm:gap-3 flex-1 min-w-0">
                               <input
                                 type="checkbox"
                                 checked={Boolean(q.forNextMeeting)}
@@ -803,8 +800,8 @@ export function QuestionsModule({
                                 className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 mt-1 cursor-pointer shrink-0"
                               />
 
-                              <div className="flex-1">
-                                <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap mb-1.5">
                                   {getPriorityBadge(q.priority)}
                                   {getStatusBadge(q.status)}
                                   {q.forNextMeeting && (
@@ -815,12 +812,12 @@ export function QuestionsModule({
                                   )}
                                 </div>
 
-                                <h3 className="text-base font-bold text-gray-900 leading-snug">
+                                <h3 className="text-sm sm:text-base font-bold text-gray-900 leading-snug break-words">
                                   {q.title}
                                 </h3>
 
                                 {q.details && (
-                                  <p className="text-xs text-gray-600 font-medium mt-1">
+                                  <p className="text-xs text-gray-600 font-medium mt-1 break-words">
                                     {q.details}
                                   </p>
                                 )}
@@ -828,67 +825,71 @@ export function QuestionsModule({
                             </div>
 
                             {/* Actions & Status Dropdown */}
-                            <div className="flex items-center gap-2 shrink-0 self-start">
-                              <select
-                                value={q.status}
-                                disabled={isDeleting}
-                                onChange={(e) => handleStatusChange(q.id, e.target.value)}
-                                className="h-8 px-2.5 rounded text-sm font-bold bg-[#F3F4F6] text-gray-900 border-none outline-none cursor-pointer hover:bg-gray-200 transition"
-                              >
-                                <option value="PENDING">Pending</option>
-                                <option value="ASKED">Asked</option>
-                                <option value="ANSWERED">Answered</option>
-                                <option value="NEED_FOLLOWUP">Need Follow-up</option>
-                              </select>
+                            <div className="flex items-center justify-between sm:justify-end gap-1.5 shrink-0 pt-2 sm:pt-0 border-t border-gray-100 sm:border-0">
+                              <div className="flex items-center gap-1.5">
+                                <select
+                                  value={q.status}
+                                  disabled={isDeleting}
+                                  onChange={(e) => handleStatusChange(q.id, e.target.value)}
+                                  className="h-8 px-2 rounded text-xs sm:text-sm font-bold bg-[#F3F4F6] text-gray-900 border-none outline-none cursor-pointer hover:bg-gray-200 transition"
+                                >
+                                  <option value="PENDING">Pending</option>
+                                  <option value="ASKED">Asked</option>
+                                  <option value="ANSWERED">Answered</option>
+                                  <option value="NEED_FOLLOWUP">Need Follow-up</option>
+                                </select>
 
-                              <button
-                                type="button"
-                                disabled={isDeleting}
-                                onClick={() => handleToggleNextMeeting(q.id, q.forNextMeeting)}
-                                title={q.forNextMeeting ? "Click to remove from Meeting Agenda" : "Click to add to Meeting Agenda"}
-                                className={cn(
-                                  "flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded transition",
-                                  q.forNextMeeting
-                                    ? "bg-emerald-100 text-emerald-800 hover:bg-rose-100 hover:text-rose-700"
-                                    : "bg-gray-100 text-gray-600 hover:bg-emerald-50 hover:text-emerald-700"
-                                )}
-                              >
-                                {q.forNextMeeting ? (
-                                  <>
-                                    <Sparkles className="w-3.5 h-3.5" />
-                                    <span>In Agenda</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Plus className="w-3.5 h-3.5" />
-                                    <span>Agenda</span>
-                                  </>
-                                )}
-                              </button>
+                                <button
+                                  type="button"
+                                  disabled={isDeleting}
+                                  onClick={() => handleToggleNextMeeting(q.id, q.forNextMeeting)}
+                                  title={q.forNextMeeting ? "Click to remove from Meeting Agenda" : "Click to add to Meeting Agenda"}
+                                  className={cn(
+                                    "flex items-center gap-1 text-[11px] font-bold px-2 py-1.5 rounded transition",
+                                    q.forNextMeeting
+                                      ? "bg-emerald-100 text-emerald-800 hover:bg-rose-100 hover:text-rose-700"
+                                      : "bg-gray-100 text-gray-600 hover:bg-emerald-50 hover:text-emerald-700"
+                                  )}
+                                >
+                                  {q.forNextMeeting ? (
+                                    <>
+                                      <Sparkles className="w-3.5 h-3.5" />
+                                      <span className="hidden xs:inline">In Agenda</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Plus className="w-3.5 h-3.5" />
+                                      <span>Agenda</span>
+                                    </>
+                                  )}
+                                </button>
+                              </div>
 
-                              <button
-                                type="button"
-                                disabled={isDeleting}
-                                onClick={() => handleOpenEditModal(q)}
-                                title="Edit question"
-                                className="p-1.5 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-transform duration-200 hover:scale-110"
-                              >
-                                <Edit2 className="w-4 h-4" />
-                              </button>
+                              <div className="flex items-center gap-0.5">
+                                <button
+                                  type="button"
+                                  disabled={isDeleting}
+                                  onClick={() => handleOpenEditModal(q)}
+                                  title="Edit question"
+                                  className="p-1.5 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition"
+                                >
+                                  <Edit2 className="w-4 h-4" />
+                                </button>
 
-                              <button
-                                type="button"
-                                disabled={isDeleting}
-                                onClick={() => handleDeleteQuestion(q.id)}
-                                title="Delete question"
-                                className="p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 transition-transform duration-200 hover:scale-110"
-                              >
-                                {isDeleting ? (
-                                  <Loader2 className="w-4 h-4 animate-spin text-red-600" />
-                                ) : (
-                                  <Trash2 className="w-4 h-4" />
-                                )}
-                              </button>
+                                <button
+                                  type="button"
+                                  disabled={isDeleting}
+                                  onClick={() => handleDeleteQuestion(q.id)}
+                                  title="Delete question"
+                                  className="p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 transition"
+                                >
+                                  {isDeleting ? (
+                                    <Loader2 className="w-4 h-4 animate-spin text-red-600" />
+                                  ) : (
+                                    <Trash2 className="w-4 h-4" />
+                                  )}
+                                </button>
+                              </div>
                             </div>
                           </div>
 
@@ -901,12 +902,12 @@ export function QuestionsModule({
                                     key={ans.id}
                                     className="bg-[#EFF6FF] p-2.5 rounded-md flex items-start justify-between gap-3 group"
                                   >
-                                    <div className="flex items-start gap-2.5">
+                                    <div className="flex items-start gap-2.5 min-w-0">
                                       <div className="w-5 h-5 rounded bg-[#3B82F6] text-white flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5">
                                         {ans.author ? ans.author.charAt(0).toUpperCase() : "C"}
                                       </div>
-                                      <div>
-                                        <div className="flex items-center gap-2">
+                                      <div className="min-w-0">
+                                        <div className="flex items-center gap-2 flex-wrap">
                                           <span className="text-xs font-bold text-gray-900">
                                             {ans.author || "Client Answer"}
                                           </span>
@@ -914,7 +915,7 @@ export function QuestionsModule({
                                             {formatDate(ans.createdAt)}
                                           </span>
                                         </div>
-                                        <p className="text-xs text-gray-800 font-medium mt-0.5 whitespace-pre-wrap">
+                                        <p className="text-xs text-gray-800 font-medium mt-0.5 whitespace-pre-wrap break-words">
                                           {ans.content}
                                         </p>
                                       </div>
@@ -922,7 +923,7 @@ export function QuestionsModule({
 
                                     <button
                                       onClick={() => handleDeleteAnswer(q.id, ans.id)}
-                                      className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-600 p-1 transition"
+                                      className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-600 p-1 transition shrink-0"
                                       title="Delete answer"
                                     >
                                       <Trash2 className="w-3.5 h-3.5" />
@@ -932,7 +933,7 @@ export function QuestionsModule({
                               </div>
                             )}
 
-                            {/* Add Answer Expandable Form */}
+                            {/* Add Answer Form */}
                             <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
                               <div className="relative flex-1 flex items-center">
                                 <input
@@ -948,7 +949,7 @@ export function QuestionsModule({
                                   onKeyDown={(e) => {
                                     if (e.key === "Enter") handleAddAnswer(q.id);
                                   }}
-                                  className="w-full h-8 pl-3 pr-24 rounded-md bg-[#F3F4F6] text-sm font-medium text-gray-900 placeholder:text-gray-400 border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] transition"
+                                  className="w-full h-9 sm:h-8 pl-3 pr-24 rounded-md bg-[#F3F4F6] text-sm font-medium text-gray-900 placeholder:text-gray-400 border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] transition"
                                 />
                                 <div className="absolute right-1">
                                   <VoiceMicButton
@@ -965,31 +966,33 @@ export function QuestionsModule({
                                 </div>
                               </div>
 
-                              <select
-                                value={newAnswerAuthor[q.id] || "Client"}
-                                onChange={(e) =>
-                                  setNewAnswerAuthor((prev) => ({
-                                    ...prev,
-                                    [q.id]: e.target.value,
-                                  }))
-                                }
-                                className="h-8 px-2 rounded-md bg-[#F3F4F6] text-sm font-bold text-gray-700 outline-none"
-                              >
-                                <option value="Client">Client</option>
-                                <option value="Me">Me</option>
-                                <option value="Discussion">Discussion</option>
-                              </select>
+                              <div className="flex items-center gap-2">
+                                <select
+                                  value={newAnswerAuthor[q.id] || "Client"}
+                                  onChange={(e) =>
+                                    setNewAnswerAuthor((prev) => ({
+                                      ...prev,
+                                      [q.id]: e.target.value,
+                                    }))
+                                  }
+                                  className="h-9 sm:h-8 px-2.5 rounded-md bg-[#F3F4F6] text-sm font-bold text-gray-700 outline-none flex-1 sm:flex-initial"
+                                >
+                                  <option value="Client">Client</option>
+                                  <option value="Me">Me</option>
+                                  <option value="Discussion">Discussion</option>
+                                </select>
 
-                              <Button
-                                variant="emerald"
-                                size="sm"
-                                onClick={() => handleAddAnswer(q.id)}
-                                disabled={isAddingAnswer[q.id]}
-                                className="gap-1 text-xs whitespace-nowrap h-8 px-2.5"
-                              >
-                                <Send className="w-3 h-3" />
-                                <span>Save Answer</span>
-                              </Button>
+                                <Button
+                                  variant="emerald"
+                                  size="sm"
+                                  onClick={() => handleAddAnswer(q.id)}
+                                  disabled={isAddingAnswer[q.id]}
+                                  className="gap-1 text-xs whitespace-nowrap h-9 sm:h-8 px-3 flex-1 sm:flex-initial justify-center"
+                                >
+                                  <Send className="w-3 h-3" />
+                                  <span>Save Answer</span>
+                                </Button>
+                              </div>
                             </div>
                           </div>
                         </motion.div>

@@ -511,9 +511,9 @@ export function MeetingPrepModule({
   };
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-6">
+    <div className="p-3 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-4 sm:space-y-6">
       {/* Top Banner */}
-      <div className="bg-[#EFF6FF] border-2 border-[#3B82F6] rounded-xl p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+      <div className="bg-[#EFF6FF] border-2 border-[#3B82F6] rounded-xl p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-lg bg-[#3B82F6] text-white flex items-center justify-center shrink-0">
             <Sparkles className="w-5 h-5" strokeWidth={2.5} />
@@ -529,7 +529,7 @@ export function MeetingPrepModule({
         </div>
 
         {/* Short & Organized Action Buttons */}
-        <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+        <div className="grid grid-cols-2 xs:grid-cols-3 sm:flex sm:items-center gap-1.5 shrink-0 w-full lg:w-auto">
           {/* Gemini AI Auto Generate */}
           <Button
             variant="amber"
@@ -565,7 +565,7 @@ export function MeetingPrepModule({
                 toast.error("Failed to generate questions");
               }
             }}
-            className="gap-1.5 text-xs h-8 px-2.5"
+            className="gap-1.5 text-xs h-8.5 sm:h-8 px-2.5 justify-center w-full sm:w-auto"
             title="Generate meeting questions with AI"
           >
             <Sparkles className="w-3.5 h-3.5 text-amber-900" />
@@ -576,7 +576,7 @@ export function MeetingPrepModule({
             variant="outline"
             size="sm"
             onClick={() => setIsTemplateModalOpen(true)}
-            className="gap-1.5 text-xs h-8 px-2.5 bg-white"
+            className="gap-1.5 text-xs h-8.5 sm:h-8 px-2.5 bg-white justify-center w-full sm:w-auto"
             title="Load standard templates"
           >
             <Layers className="w-3.5 h-3.5" />
@@ -587,18 +587,18 @@ export function MeetingPrepModule({
             variant="outline"
             size="sm"
             onClick={() => setIsPickModalOpen(true)}
-            className="gap-1.5 text-xs h-8 px-2.5 bg-white text-blue-700 hover:bg-blue-50 border-blue-200"
+            className="gap-1.5 text-xs h-8.5 sm:h-8 px-2.5 bg-white text-blue-700 hover:bg-blue-50 border-blue-200 justify-center w-full sm:w-auto"
             title="Select questions from project Q&A"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>Add from Q&A</span>
+            <span>From Q&A</span>
           </Button>
 
           <Button
             variant="secondary"
             size="sm"
             onClick={handleCopyAgendaMarkdown}
-            className="gap-1.5 text-xs h-8 px-2.5"
+            className="gap-1.5 text-xs h-8.5 sm:h-8 px-2.5 justify-center w-full sm:w-auto"
             title="Copy agenda to clipboard"
           >
             <Copy className="w-3.5 h-3.5" />
@@ -610,7 +610,7 @@ export function MeetingPrepModule({
               variant="outline"
               size="sm"
               onClick={handleClearEntireAgenda}
-              className="gap-1.5 text-xs h-8 px-2.5 text-rose-700 bg-rose-50 hover:bg-rose-100 hover:text-rose-800 border-rose-200"
+              className="gap-1.5 text-xs h-8.5 sm:h-8 px-2.5 text-rose-700 bg-rose-50 hover:bg-rose-100 hover:text-rose-800 border-rose-200 justify-center w-full sm:w-auto"
               title="Clear all questions"
             >
               <X className="w-3.5 h-3.5" />
@@ -624,7 +624,7 @@ export function MeetingPrepModule({
             onClick={() =>
               onScheduleMeetingWithQuestions(nextMeetingQuestions.map((q) => q.id))
             }
-            className="gap-1.5 text-xs h-8 px-2.5"
+            className="gap-1.5 text-xs h-8.5 sm:h-8 px-2.5 justify-center w-full sm:w-auto col-span-2 xs:col-span-1"
             title="Schedule meeting with these questions"
           >
             <Calendar className="w-3.5 h-3.5" />
@@ -667,12 +667,12 @@ export function MeetingPrepModule({
           </div>
         </div>
 
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto min-w-0">
           <select
             value={quickQuestionCategory}
             onChange={(e) => setQuickQuestionCategory(e.target.value)}
             disabled={isAddingQuestion}
-            className="h-11 px-3 rounded-md bg-[#F3F4F6] text-sm font-semibold text-gray-800 outline-none w-full sm:w-auto border-2 border-transparent focus:bg-white focus:border-[#3B82F6]"
+            className="h-11 px-3 rounded-md bg-[#F3F4F6] text-sm font-semibold text-gray-800 outline-none w-full sm:w-auto border-2 border-transparent focus:bg-white focus:border-[#3B82F6] truncate"
           >
             {allCategoryNames.map((c) => (
               <option key={c} value={c}>
@@ -830,7 +830,7 @@ export function MeetingPrepModule({
                           exit={{ opacity: 0, y: -6 }}
                           transition={{ duration: 0.18, ease: "easeOut" }}
                           className={cn(
-                            "p-3 rounded-md border flex items-start justify-between gap-2.5 transition-all group select-none",
+                            "p-3 rounded-md border flex flex-col sm:flex-row sm:items-start justify-between gap-2.5 transition-all group select-none",
                             q.status === "ANSWERED"
                               ? "bg-emerald-50/50 border-emerald-200"
                               : "bg-white hover:bg-gray-50 border-gray-200",
@@ -839,15 +839,16 @@ export function MeetingPrepModule({
                             isDragTarget && "border-t-4 border-t-[#3B82F6] shadow-sm bg-blue-50/40"
                           )}
                         >
-                          {/* Drag Handle */}
-                          <div
-                            className="text-gray-300 group-hover:text-gray-600 cursor-grab active:cursor-grabbing p-1 -ml-1 mt-0.5 shrink-0 transition"
-                            title="Drag to rearrange agenda order"
-                          >
-                            <GripVertical className="w-4 h-4" />
-                          </div>
+                          {/* Left Details Block */}
+                          <div className="flex items-start gap-2.5 flex-1 min-w-0">
+                            {/* Drag Handle */}
+                            <div
+                              className="text-gray-300 group-hover:text-gray-600 cursor-grab active:cursor-grabbing p-1 -ml-1 mt-0.5 shrink-0 transition"
+                              title="Drag to rearrange agenda order"
+                            >
+                              <GripVertical className="w-4 h-4" />
+                            </div>
 
-                          <div className="flex items-start gap-3 flex-1 min-w-0">
                             <input
                               type="checkbox"
                               checked={q.status === "ANSWERED" || q.status === "ASKED"}
@@ -862,10 +863,10 @@ export function MeetingPrepModule({
                             />
 
                             <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
+                              <div className="flex items-center gap-2 flex-wrap mb-1">
                                 <p
                                   className={cn(
-                                    "text-sm font-bold leading-snug",
+                                    "text-sm font-bold leading-snug break-words",
                                     q.status === "ANSWERED"
                                       ? "text-emerald-950 line-through opacity-80"
                                       : "text-gray-900"
@@ -888,7 +889,7 @@ export function MeetingPrepModule({
                               </div>
 
                               {q.details && (
-                                <p className="text-xs text-gray-500 mt-0.5 whitespace-pre-wrap">
+                                <p className="text-xs text-gray-500 mt-0.5 whitespace-pre-wrap break-words">
                                   {q.details}
                                 </p>
                               )}
@@ -897,7 +898,7 @@ export function MeetingPrepModule({
                                   <span className="text-[10px] font-extrabold uppercase text-emerald-800">
                                     Latest Decision:
                                   </span>
-                                  <p className="text-xs text-emerald-900 font-medium whitespace-pre-wrap">
+                                  <p className="text-xs text-emerald-900 font-medium whitespace-pre-wrap break-words">
                                     {q.answers[q.answers.length - 1].content}
                                   </p>
                                 </div>
@@ -906,15 +907,15 @@ export function MeetingPrepModule({
                           </div>
 
                           {/* Right Action Controls: Reorder Up/Down, Status, Edit, Delete */}
-                          <div className="shrink-0 flex items-center gap-1.5 self-start">
+                          <div className="shrink-0 flex items-center justify-between sm:justify-end gap-1.5 pt-2 sm:pt-0 border-t border-gray-100 sm:border-0 w-full sm:w-auto">
                             {/* 1-Tap Reorder Buttons */}
-                            <div className="flex flex-col -my-1">
+                            <div className="flex items-center sm:flex-col sm:-my-1 gap-1 sm:gap-0">
                               <button
                                 type="button"
                                 disabled={isDeleting || isFirstInCategory}
                                 onClick={() => handleMoveQuestion(q.id, "up", category)}
                                 title="Move up in agenda"
-                                className="p-0.5 text-gray-400 hover:text-blue-600 disabled:opacity-20 transition"
+                                className="p-1 sm:p-0.5 text-gray-400 hover:text-blue-600 disabled:opacity-20 transition bg-gray-50 sm:bg-transparent rounded"
                               >
                                 <ChevronUp className="w-3.5 h-3.5" />
                               </button>
@@ -923,7 +924,7 @@ export function MeetingPrepModule({
                                 disabled={isDeleting || isLastInCategory}
                                 onClick={() => handleMoveQuestion(q.id, "down", category)}
                                 title="Move down in agenda"
-                                className="p-0.5 text-gray-400 hover:text-blue-600 disabled:opacity-20 transition"
+                                className="p-1 sm:p-0.5 text-gray-400 hover:text-blue-600 disabled:opacity-20 transition bg-gray-50 sm:bg-transparent rounded"
                               >
                                 <ChevronDown className="w-3.5 h-3.5" />
                               </button>
@@ -948,42 +949,44 @@ export function MeetingPrepModule({
                               <option value="NEED_FOLLOWUP">Need Follow-up</option>
                             </select>
 
-                            {/* Edit Button */}
-                            <button
-                              type="button"
-                              disabled={isDeleting}
-                              onClick={() => handleOpenEditModal(q)}
-                              title="Edit question details"
-                              className="p-1.5 rounded text-gray-500 hover:text-blue-600 hover:bg-blue-50 transition"
-                            >
-                              <Edit2 className="w-3.5 h-3.5" />
-                            </button>
+                            <div className="flex items-center gap-0.5">
+                              {/* Edit Button */}
+                              <button
+                                type="button"
+                                disabled={isDeleting}
+                                onClick={() => handleOpenEditModal(q)}
+                                title="Edit question details"
+                                className="p-1.5 rounded text-gray-500 hover:text-blue-600 hover:bg-blue-50 transition"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
 
-                            {/* Remove from Agenda button */}
-                            <button
-                              type="button"
-                              disabled={isDeleting}
-                              onClick={() => handleRemoveFromAgenda(q.id)}
-                              title="Remove from meeting agenda (Keep question in Client Q&A)"
-                              className="p-1.5 rounded text-gray-400 hover:text-amber-700 hover:bg-amber-50 transition"
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
+                              {/* Remove from Agenda button */}
+                              <button
+                                type="button"
+                                disabled={isDeleting}
+                                onClick={() => handleRemoveFromAgenda(q.id)}
+                                title="Remove from meeting agenda (Keep question in Client Q&A)"
+                                className="p-1.5 rounded text-gray-400 hover:text-amber-700 hover:bg-amber-50 transition"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
 
-                            {/* Delete Question (Soft Delete) */}
-                            <button
-                              type="button"
-                              disabled={isDeleting}
-                              onClick={() => handleDeleteQuestion(q.id)}
-                              title="Delete question permanently (Soft delete)"
-                              className="p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 transition"
-                            >
-                              {isDeleting ? (
-                                <Loader2 className="w-3.5 h-3.5 animate-spin text-red-600" />
-                              ) : (
-                                <Trash2 className="w-3.5 h-3.5" />
-                              )}
-                            </button>
+                              {/* Delete Question (Soft Delete) */}
+                              <button
+                                type="button"
+                                disabled={isDeleting}
+                                onClick={() => handleDeleteQuestion(q.id)}
+                                title="Delete question permanently (Soft delete)"
+                                className="p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 transition"
+                              >
+                                {isDeleting ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin text-red-600" />
+                                ) : (
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+                            </div>
                           </div>
                         </motion.div>
                       );
