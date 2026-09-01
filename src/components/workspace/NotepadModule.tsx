@@ -40,6 +40,7 @@ import {
   Strikethrough,
   Search,
   Scissors,
+  ChevronLeft,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -102,6 +103,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
   const [saveStatus, setSaveStatus] = React.useState<"saved" | "saving" | "unsaved">("saved");
   const [viewMode, setViewMode] = React.useState<"edit" | "preview" | "split">("edit");
   const [searchNotes, setSearchNotes] = React.useState("");
+  const [mobileView, setMobileView] = React.useState<"list" | "editor">(notes.length > 0 ? "editor" : "list");
 
   // Undo / Redo history stack tracking
   const [history, setHistory] = React.useState<string[]>([]);
@@ -1081,7 +1083,10 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
   };
 
   const handleSelectNote = (noteId: string) => {
-    if (noteId === activeNoteId) return;
+    if (noteId === activeNoteId) {
+      setMobileView("editor");
+      return;
+    }
     if (activeNoteId && saveStatus === "unsaved") {
       saveNoteToServer(
         activeNoteId,
@@ -1092,6 +1097,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
       );
     }
     setActiveNoteId(noteId);
+    setMobileView("editor");
   };
 
   const handleCreateNote = async () => {
@@ -1111,6 +1117,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
         onNotesChange([data.note, ...notes]);
         lastLoadedNoteIdRef.current = null;
         setActiveNoteId(data.note.id);
+        setMobileView("editor");
         toast.success("New note created");
       }
     } catch (err) {
@@ -1133,6 +1140,9 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
         if (activeNoteId === id) {
           lastLoadedNoteIdRef.current = null;
           setActiveNoteId(updated.length > 0 ? updated[0].id : null);
+          if (updated.length === 0) {
+            setMobileView("list");
+          }
         }
         toast.success("Note deleted");
       }
@@ -1299,7 +1309,12 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
   return (
     <div className="flex flex-col lg:flex-row h-full min-h-0 bg-white relative overflow-hidden">
       {/* Left Sidebar: Notes Navigator */}
-      <div className="w-full lg:w-72 sm:w-80 border-r-2 border-gray-200 bg-[#F3F4F6] flex flex-col shrink-0 h-full overflow-hidden">
+      <div
+        className={cn(
+          "w-full lg:w-72 sm:w-80 border-r-2 border-gray-200 bg-[#F3F4F6] flex-col shrink-0 h-full overflow-hidden",
+          mobileView === "editor" ? "hidden lg:flex" : "flex"
+        )}
+      >
         <div className="p-3 border-b-2 border-gray-200 bg-white shrink-0">
           <div className="flex items-center justify-between gap-2 mb-2">
             <div className="flex items-center gap-1.5">
@@ -1400,26 +1415,45 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
 
       {/* Main Advance Editor Area */}
       {activeNoteId ? (
-        <div className="flex-1 flex flex-col bg-white overflow-hidden relative" ref={editorContainerRef}>
+        <div
+          className={cn(
+            "flex-1 flex-col bg-white overflow-hidden relative",
+            mobileView === "list" ? "hidden lg:flex" : "flex"
+          )}
+          ref={editorContainerRef}
+        >
           {/* Note Controls Top Bar */}
-          <div className="p-4 border-b-2 border-gray-200 flex flex-wrap items-center justify-between gap-3 bg-white">
-            <div className="flex-1 min-w-[240px]">
-              <input
-                type="text"
-                value={currentTitle}
-                onChange={handleTitleChange}
-                placeholder="Note Title..."
-                className="w-full text-xl sm:text-2xl font-extrabold text-gray-900 border-none outline-none placeholder:text-gray-300 bg-transparent"
-              />
-              <div className="flex items-center gap-2 mt-1">
-                <Tag className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+          <div className="p-3 sm:p-4 border-b-2 border-gray-200 flex flex-wrap items-center justify-between gap-2.5 bg-white">
+            <div className="flex items-start gap-2 flex-1 min-w-[200px]">
+              {/* Mobile Back to Notes List Button */}
+              <button
+                type="button"
+                onClick={() => setMobileView("list")}
+                className="lg:hidden flex items-center gap-1 text-xs font-bold text-gray-700 bg-gray-100 hover:bg-gray-200 px-2.5 py-1.5 rounded-md transition cursor-pointer shrink-0 mt-0.5"
+                title="Back to notes list"
+              >
+                <ChevronLeft className="w-4 h-4" />
+                <span className="text-[11px]">Notes</span>
+              </button>
+
+              <div className="flex-1 min-w-0">
                 <input
                   type="text"
-                  value={currentTags}
-                  onChange={handleTagsChange}
-                  placeholder="Add tags (e.g., Requirements, UI/UX, Sprint)..."
-                  className="text-xs text-gray-600 font-medium placeholder:text-gray-400 border-none outline-none w-full bg-transparent"
+                  value={currentTitle}
+                  onChange={handleTitleChange}
+                  placeholder="Note Title..."
+                  className="w-full text-lg sm:text-2xl font-extrabold text-gray-900 border-none outline-none placeholder:text-gray-300 bg-transparent"
                 />
+                <div className="flex items-center gap-2 mt-0.5">
+                  <Tag className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                  <input
+                    type="text"
+                    value={currentTags}
+                    onChange={handleTagsChange}
+                    placeholder="Add tags (e.g., Requirements, UI/UX, Sprint)..."
+                    className="text-xs text-gray-600 font-medium placeholder:text-gray-400 border-none outline-none w-full bg-transparent"
+                  />
+                </div>
               </div>
             </div>
 
@@ -2054,7 +2088,12 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
           )}
         </div>
       ) : (
-        <div className="flex-1 flex items-center justify-center p-12 text-center bg-white">
+        <div
+          className={cn(
+            "flex-1 flex-col items-center justify-center p-8 text-center bg-gray-50",
+            mobileView === "list" ? "hidden lg:flex" : "flex"
+          )}
+        >
           <div>
             <div className="w-16 h-16 rounded-full bg-blue-50 text-[#3B82F6] flex items-center justify-center mx-auto mb-4">
               <FileText className="w-8 h-8" strokeWidth={2.5} />
