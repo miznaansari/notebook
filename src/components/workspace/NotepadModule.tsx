@@ -1423,185 +1423,191 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
           ref={editorContainerRef}
         >
           {/* Note Controls Top Bar */}
-          <div className="p-3 sm:p-4 border-b-2 border-gray-200 flex flex-wrap items-center justify-between gap-2.5 bg-white">
-            <div className="flex items-start gap-2 flex-1 min-w-[200px]">
-              {/* Mobile Back to Notes List Button */}
-              <button
-                type="button"
-                onClick={() => setMobileView("list")}
-                className="lg:hidden flex items-center gap-1 text-xs font-bold text-gray-700 bg-gray-100 hover:bg-gray-200 px-2.5 py-1.5 rounded-md transition cursor-pointer shrink-0 mt-0.5"
-                title="Back to notes list"
-              >
-                <ChevronLeft className="w-4 h-4" />
-                <span className="text-[11px]">Notes</span>
-              </button>
+          <div className="p-2.5 sm:p-4 border-b-2 border-gray-200 bg-white">
+            <div className="flex items-center justify-between gap-2">
+              {/* Left: Mobile Back Button + Title & Tags */}
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                <button
+                  type="button"
+                  onClick={() => setMobileView("list")}
+                  className="lg:hidden flex items-center gap-1 text-xs font-bold text-gray-700 bg-gray-100 hover:bg-gray-200 p-1.5 sm:px-2.5 sm:py-1.5 rounded-md transition cursor-pointer shrink-0"
+                  title="Back to notes list"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                  <span className="hidden sm:inline text-xs">Notes</span>
+                </button>
 
-              <div className="flex-1 min-w-0">
-                <input
-                  type="text"
-                  value={currentTitle}
-                  onChange={handleTitleChange}
-                  placeholder="Note Title..."
-                  className="w-full text-lg sm:text-2xl font-extrabold text-gray-900 border-none outline-none placeholder:text-gray-300 bg-transparent"
-                />
-                <div className="flex items-center gap-2 mt-0.5">
-                  <Tag className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                <div className="flex-1 min-w-0">
                   <input
                     type="text"
-                    value={currentTags}
-                    onChange={handleTagsChange}
-                    placeholder="Add tags (e.g., Requirements, UI/UX, Sprint)..."
-                    className="text-xs text-gray-600 font-medium placeholder:text-gray-400 border-none outline-none w-full bg-transparent"
+                    value={currentTitle}
+                    onChange={handleTitleChange}
+                    placeholder="Note Title..."
+                    className="w-full text-base sm:text-2xl font-extrabold text-gray-900 border-none outline-none placeholder:text-gray-300 bg-transparent truncate"
                   />
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <Tag className="w-3 h-3 text-gray-400 shrink-0" />
+                    <input
+                      type="text"
+                      value={currentTags}
+                      onChange={handleTagsChange}
+                      placeholder="Add tags (e.g., Requirements)..."
+                      className="text-[11px] sm:text-xs text-gray-600 font-medium placeholder:text-gray-400 border-none outline-none w-full bg-transparent truncate"
+                    />
+                  </div>
                 </div>
               </div>
-            </div>
 
-            {/* Top Action Controls */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <span
-                onClick={handleManualSave}
-                title="Click to save (Ctrl+S)"
-                className={cn(
-                  "text-xs font-bold flex items-center gap-1.5 px-2.5 py-1 rounded-md select-none cursor-pointer transition",
-                  saveStatus === "saved" && "bg-emerald-50 text-emerald-800",
-                  saveStatus === "saving" && "bg-blue-50 text-blue-800",
-                  saveStatus === "unsaved" && "bg-amber-50 text-amber-900 hover:bg-amber-100"
-                )}
-              >
-                {saveStatus === "saved" && (
-                  <>
-                    <Check className="w-3.5 h-3.5 text-[#10B981]" strokeWidth={3} />
-                    <span>Saved</span>
-                  </>
-                )}
-                {saveStatus === "saving" && (
-                  <>
-                    <Clock className="w-3.5 h-3.5 text-[#3B82F6] animate-spin" />
-                    <span>Saving...</span>
-                  </>
-                )}
-                {saveStatus === "unsaved" && (
-                  <>
-                    <Save className="w-3.5 h-3.5 text-[#F59E0B]" />
-                    <span>Save (Ctrl+S)</span>
-                  </>
-                )}
-              </span>
+              {/* Right: Actions Bar (Save status, Voice, AI, Pin, Copy, Export) */}
+              <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+                {/* Save Status Badge */}
+                <span
+                  onClick={handleManualSave}
+                  title="Click to save (Ctrl+S)"
+                  className={cn(
+                    "text-[11px] sm:text-xs font-bold flex items-center gap-1 px-2 py-1 rounded-md select-none cursor-pointer transition shrink-0",
+                    saveStatus === "saved" && "bg-emerald-50 text-emerald-800",
+                    saveStatus === "saving" && "bg-blue-50 text-blue-800",
+                    saveStatus === "unsaved" && "bg-amber-50 text-amber-900 hover:bg-amber-100"
+                  )}
+                >
+                  {saveStatus === "saved" && (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-[#10B981]" strokeWidth={3} />
+                      <span className="hidden sm:inline">Saved</span>
+                    </>
+                  )}
+                  {saveStatus === "saving" && (
+                    <>
+                      <Clock className="w-3.5 h-3.5 text-[#3B82F6] animate-spin" />
+                      <span className="hidden sm:inline">Saving...</span>
+                    </>
+                  )}
+                  {saveStatus === "unsaved" && (
+                    <>
+                      <Save className="w-3.5 h-3.5 text-[#F59E0B]" />
+                      <span className="hidden sm:inline">Save</span>
+                    </>
+                  )}
+                </span>
 
-              {/* Live Voice STT Dictation */}
-              <VoiceMicButton
-                onTranscript={(transcript) => {
-                  if (typingTimerRef.current) {
-                    clearTimeout(typingTimerRef.current);
-                    typingTimerRef.current = null;
-                  }
-                  const textarea = textareaRef.current;
-                  let newContent = "";
-                  let newPos = 0;
-                  if (textarea) {
-                    const start = textarea.selectionStart;
-                    const end = textarea.selectionEnd;
-                    const before = currentContent.substring(0, start);
-                    const after = currentContent.substring(end);
-                    const separator = before && !before.endsWith("\n") && !before.endsWith(" ") ? " " : "";
-                    newContent = before + separator + transcript + after;
-                    newPos = start + separator.length + transcript.length;
-                  } else {
-                    const separator = currentContent && !currentContent.endsWith("\n") ? "\n\n" : "";
-                    newContent = currentContent + separator + transcript;
-                  }
+                {/* Live Voice STT Dictation */}
+                <VoiceMicButton
+                  onTranscript={(transcript) => {
+                    if (typingTimerRef.current) {
+                      clearTimeout(typingTimerRef.current);
+                      typingTimerRef.current = null;
+                    }
+                    const textarea = textareaRef.current;
+                    let newContent = "";
+                    let newPos = 0;
+                    if (textarea) {
+                      const start = textarea.selectionStart;
+                      const end = textarea.selectionEnd;
+                      const before = currentContent.substring(0, start);
+                      const after = currentContent.substring(end);
+                      const separator = before && !before.endsWith("\n") && !before.endsWith(" ") ? " " : "";
+                      newContent = before + separator + transcript + after;
+                      newPos = start + separator.length + transcript.length;
+                    } else {
+                      const separator = currentContent && !currentContent.endsWith("\n") ? "\n\n" : "";
+                      newContent = currentContent + separator + transcript;
+                    }
 
-                  pushHistorySnapshot(currentContent);
-                  pushHistorySnapshot(newContent);
-                  setCurrentContent(newContent);
-                  latestContentRef.current = newContent;
-                  scheduleAutoSave();
+                    pushHistorySnapshot(currentContent);
+                    pushHistorySnapshot(newContent);
+                    setCurrentContent(newContent);
+                    latestContentRef.current = newContent;
+                    scheduleAutoSave();
 
-                  if (textarea && newPos > 0) {
-                    setTimeout(() => {
-                      textarea.focus();
-                      textarea.setSelectionRange(newPos, newPos);
-                    }, 50);
-                  }
+                    if (textarea && newPos > 0) {
+                      setTimeout(() => {
+                        textarea.focus();
+                        textarea.setSelectionRange(newPos, newPos);
+                      }, 50);
+                    }
 
-                  toast.success("Voice transcript inserted", {
-                    action: {
-                      label: "Undo (Ctrl+Z)",
-                      onClick: () => handleUndo(),
-                    },
-                    duration: 4000,
-                  });
-                }}
-                variant="rose"
-                size="sm"
-                label="Voice (Live)"
-              />
+                    toast.success("Voice transcript inserted", {
+                      action: {
+                        label: "Undo (Ctrl+Z)",
+                        onClick: () => handleUndo(),
+                      },
+                      duration: 4000,
+                    });
+                  }}
+                  variant="rose"
+                  size="sm"
+                  label="Voice"
+                />
 
-              {/* Gemini AI Assistant */}
-              <AIMagicButton
-                getText={() => currentContent}
-                onResult={(aiText) => {
-                  if (typingTimerRef.current) {
-                    clearTimeout(typingTimerRef.current);
-                    typingTimerRef.current = null;
-                  }
-                  pushHistorySnapshot(currentContent);
-                  pushHistorySnapshot(aiText);
-                  setCurrentContent(aiText);
-                  latestContentRef.current = aiText;
-                  scheduleAutoSave();
-                  toast.success("AI response applied!", {
-                    action: {
-                      label: "Undo (Ctrl+Z)",
-                      onClick: () => handleUndo(),
-                    },
-                    duration: 5000,
-                  });
-                }}
-                context={`Project Note: ${currentTitle}`}
-                variant="secondary"
-                size="sm"
-              />
+                {/* Gemini AI Assistant */}
+                <AIMagicButton
+                  getText={() => currentContent}
+                  onResult={(aiText) => {
+                    if (typingTimerRef.current) {
+                      clearTimeout(typingTimerRef.current);
+                      typingTimerRef.current = null;
+                    }
+                    pushHistorySnapshot(currentContent);
+                    pushHistorySnapshot(aiText);
+                    setCurrentContent(aiText);
+                    latestContentRef.current = aiText;
+                    scheduleAutoSave();
+                    toast.success("AI response applied!", {
+                      action: {
+                        label: "Undo (Ctrl+Z)",
+                        onClick: () => handleUndo(),
+                      },
+                      duration: 5000,
+                    });
+                  }}
+                  context={`Project Note: ${currentTitle}`}
+                  variant="secondary"
+                  size="sm"
+                />
 
-              <Button
-                variant={isPinned ? "amber" : "secondary"}
-                size="sm"
-                onClick={handleTogglePin}
-                className="gap-1 text-xs"
-                title={isPinned ? "Unpin Note" : "Pin Note to Top"}
-              >
-                <Pin className={cn("w-3.5 h-3.5", isPinned && "fill-current")} />
-                <span className="hidden sm:inline">{isPinned ? "Pinned" : "Pin"}</span>
-              </Button>
+                {/* Pin button */}
+                <Button
+                  variant={isPinned ? "amber" : "secondary"}
+                  size="sm"
+                  onClick={handleTogglePin}
+                  className="h-8 px-2 text-xs"
+                  title={isPinned ? "Unpin Note" : "Pin Note to Top"}
+                >
+                  <Pin className={cn("w-3.5 h-3.5", isPinned && "fill-current")} />
+                  <span className="hidden md:inline">{isPinned ? "Pinned" : "Pin"}</span>
+                </Button>
 
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={handleCopyNote}
-                className="gap-1 text-xs"
-                title="Copy Markdown"
-              >
-                <Copy className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Copy</span>
-              </Button>
+                {/* Copy button */}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleCopyNote}
+                  className="hidden sm:flex h-8 px-2 text-xs"
+                  title="Copy Markdown"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span className="hidden md:inline">Copy</span>
+                </Button>
 
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={handleDownloadNote}
-                className="gap-1 text-xs"
-                title="Download Note (.md)"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Export</span>
-              </Button>
+                {/* Download Export button */}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleDownloadNote}
+                  className="hidden sm:flex h-8 px-2 text-xs"
+                  title="Download Note (.md)"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span className="hidden md:inline">Export</span>
+                </Button>
+              </div>
             </div>
           </div>
 
           {/* Formatting Ribbon */}
-          <div className="px-4 py-2 bg-[#F3F4F6] border-b-2 border-gray-200 flex items-center justify-between gap-2 overflow-x-auto select-none">
-            <div className="flex items-center gap-1">
+          <div className="px-2 sm:px-4 py-1.5 bg-[#F3F4F6] border-b-2 border-gray-200 flex items-center justify-between gap-2 overflow-x-auto select-none no-scrollbar">
+            <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
               {/* History Undo / Redo */}
               <button
                 type="button"
@@ -1621,34 +1627,8 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
               >
                 <Redo2 className="w-4 h-4" />
               </button>
-              <div className="w-px h-5 bg-gray-300 mx-1" />
 
-              {/* Headings */}
-              <button
-                type="button"
-                onClick={() => applyFormatting("# ", "")}
-                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 transition"
-                title="Heading 1 (#)"
-              >
-                <Heading1 className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() => applyFormatting("## ", "")}
-                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 transition"
-                title="Heading 2 (##)"
-              >
-                <Heading2 className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() => applyFormatting("### ", "")}
-                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 transition"
-                title="Heading 3 (###)"
-              >
-                <Heading3 className="w-4 h-4" />
-              </button>
-              <div className="w-px h-5 bg-gray-300 mx-1" />
+              <div className="w-px h-4 bg-gray-300 mx-0.5 sm:mx-1" />
 
               {/* Text Formats */}
               <button
@@ -1683,7 +1663,36 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
               >
                 <Highlighter className="w-4 h-4" />
               </button>
-              <div className="w-px h-5 bg-gray-300 mx-1" />
+
+              <div className="w-px h-4 bg-gray-300 mx-0.5 sm:mx-1" />
+
+              {/* Headings */}
+              <button
+                type="button"
+                onClick={() => applyFormatting("# ", "")}
+                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 transition"
+                title="Heading 1 (#)"
+              >
+                <Heading1 className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => applyFormatting("## ", "")}
+                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 transition"
+                title="Heading 2 (##)"
+              >
+                <Heading2 className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => applyFormatting("### ", "")}
+                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 transition"
+                title="Heading 3 (###)"
+              >
+                <Heading3 className="w-4 h-4" />
+              </button>
+
+              <div className="w-px h-4 bg-gray-300 mx-0.5 sm:mx-1" />
 
               {/* Lists & Tasks */}
               <button
@@ -1710,7 +1719,8 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
               >
                 <CheckSquare className="w-4 h-4 text-[#3B82F6]" />
               </button>
-              <div className="w-px h-5 bg-gray-300 mx-1" />
+
+              <div className="w-px h-4 bg-gray-300 mx-0.5 sm:mx-1" />
 
               {/* Blocks */}
               <button
@@ -1739,25 +1749,25 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
               </button>
             </div>
 
-            {/* View Mode Toggle */}
-            <div className="flex items-center gap-1 bg-white p-1 rounded-md border-2 border-gray-200 shrink-0">
+            {/* View Mode Toggle Switch */}
+            <div className="flex items-center gap-0.5 bg-white p-0.5 rounded-md border-2 border-gray-200 shrink-0 ml-auto">
               <button
                 type="button"
                 onClick={() => setViewMode("edit")}
                 className={cn(
-                  "px-2.5 py-1 text-xs font-bold rounded transition",
+                  "px-2 py-0.5 text-xs font-bold rounded transition",
                   viewMode === "edit"
                     ? "bg-[#3B82F6] text-white"
                     : "text-gray-600 hover:text-gray-900"
                 )}
               >
-                Live Editor
+                Edit
               </button>
               <button
                 type="button"
                 onClick={() => setViewMode("preview")}
                 className={cn(
-                  "px-2.5 py-1 text-xs font-bold rounded transition",
+                  "px-2 py-0.5 text-xs font-bold rounded transition",
                   viewMode === "preview"
                     ? "bg-[#3B82F6] text-white"
                     : "text-gray-600 hover:text-gray-900"
@@ -1769,7 +1779,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
                 type="button"
                 onClick={() => setViewMode("split")}
                 className={cn(
-                  "hidden md:block px-2.5 py-1 text-xs font-bold rounded transition",
+                  "hidden md:block px-2 py-0.5 text-xs font-bold rounded transition",
                   viewMode === "split"
                     ? "bg-[#3B82F6] text-white"
                     : "text-gray-600 hover:text-gray-900"
