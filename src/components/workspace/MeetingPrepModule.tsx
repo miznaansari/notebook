@@ -28,6 +28,7 @@ import { VoiceMicButton } from "@/components/ui/voice-mic-button";
 import { SYSTEM_TEMPLATES } from "@/lib/templates";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { motion, AnimatePresence } from "framer-motion";
 
 interface MeetingPrepModuleProps {
   projectId: string;
@@ -60,6 +61,7 @@ export function MeetingPrepModule({
   const [quickQuestionCategory, setQuickQuestionCategory] = React.useState("User Management");
   const [customCatInput, setCustomCatInput] = React.useState("");
   const [isAddingQuestion, setIsAddingQuestion] = React.useState(false);
+  const [deletingQuestionIds, setDeletingQuestionIds] = React.useState<{ [key: string]: boolean }>({});
 
   // Edit question modal state
   const [editingQuestion, setEditingQuestion] = React.useState<any | null>(null);
@@ -87,9 +89,9 @@ export function MeetingPrepModule({
     return Array.from(new Set(list));
   }, [categories, questions]);
 
-  // Questions explicitly marked for next meeting agenda (excluding soft-deleted)
+  // Questions in meeting prep (excluding soft-deleted)
   const nextMeetingQuestions = questions.filter(
-    (q) => q.status !== "DELETED" && Boolean(q.forNextMeeting)
+    (q) => q.status !== "DELETED"
   );
 
   // Group questions by category
@@ -167,6 +169,30 @@ export function MeetingPrepModule({
     }
   };
 
+  const handleToggleDiscussed = async (questionId: string, currentStatus: string) => {
+    const nextStatus =
+      currentStatus === "ANSWERED" || currentStatus === "ASKED" ? "PENDING" : "ANSWERED";
+
+    // Instant optimistic update (does not remove from screen)
+    onQuestionsChange(
+      questions.map((q) => (q.id === questionId ? { ...q, status: nextStatus } : q))
+    );
+
+    try {
+      const res = await fetch(`/api/projects/${projectId}/questions/${questionId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: nextStatus }),
+      });
+
+      if (res.ok) {
+        toast.success(nextStatus === "ANSWERED" ? "Marked Discussed" : "Marked Pending");
+      }
+    } catch (err) {
+      toast.error("Failed to update status");
+    }
+  };
+
   const handleToggleNextMeetingFlag = async (questionId: string, currentVal: boolean) => {
     // Instant optimistic update
     onQuestionsChange(
@@ -189,23 +215,11 @@ export function MeetingPrepModule({
         );
         toast.success(
           !currentVal
-            ? "Question added to Next Meeting Agenda"
-            : "Removed from Next Meeting Agenda"
+            ? "Added to Meeting Agenda"
+            : "Removed from Meeting Agenda"
         );
-      } else {
-        onQuestionsChange(
-          questions.map((q) =>
-            q.id === questionId ? { ...q, forNextMeeting: currentVal } : q
-          )
-        );
-        toast.error("Failed to update agenda flag");
       }
     } catch (err) {
-      onQuestionsChange(
-        questions.map((q) =>
-          q.id === questionId ? { ...q, forNextMeeting: currentVal } : q
-        )
-      );
       toast.error("Failed to update agenda flag");
     }
   };
@@ -351,6 +365,8 @@ export function MeetingPrepModule({
   const handleDeleteQuestion = async (questionId: string) => {
     if (!confirm("Are you sure you want to delete this question?")) return;
 
+    setDeletingQuestionIds((prev) => ({ ...prev, [questionId]: true }));
+
     try {
       const res = await fetch(`/api/projects/${projectId}/questions/${questionId}`, {
         method: "DELETE",
@@ -368,6 +384,12 @@ export function MeetingPrepModule({
       }
     } catch (err) {
       toast.error("Failed to delete question");
+    } finally {
+      setDeletingQuestionIds((prev) => {
+        const copy = { ...prev };
+        delete copy[questionId];
+        return copy;
+      });
     }
   };
 
@@ -400,28 +422,29 @@ export function MeetingPrepModule({
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-6">
       {/* Top Banner */}
-      <div className="bg-[#EFF6FF] border-2 border-[#3B82F6] rounded-xl p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-start gap-4">
-          <div className="w-12 h-12 rounded-lg bg-[#3B82F6] text-white flex items-center justify-center shrink-0">
-            <Sparkles className="w-6 h-6" strokeWidth={2.5} />
+      <div className="bg-[#EFF6FF] border-2 border-[#3B82F6] rounded-xl p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg bg-[#3B82F6] text-white flex items-center justify-center shrink-0">
+            <Sparkles className="w-5 h-5" strokeWidth={2.5} />
           </div>
           <div>
-            <h2 className="text-xl sm:text-2xl font-extrabold text-gray-900 tracking-tight">
-              Next Meeting Preparation & Client Questions
+            <h2 className="text-lg sm:text-xl font-extrabold text-gray-900 tracking-tight">
+              Meeting Preparation
             </h2>
-            <p className="text-xs sm:text-sm font-medium text-gray-700 mt-1 max-w-2xl">
-              Organize topics and pending questions to ask the client in the upcoming meeting. You can load standard requirement templates, customize questions, and copy the agenda.
+            <p className="text-xs font-medium text-gray-600">
+              Prepare topics and questions for your upcoming client meeting.
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap self-start md:self-auto">
+        {/* Short & Organized Action Buttons */}
+        <div className="flex items-center gap-1.5 flex-wrap shrink-0">
           {/* Gemini AI Auto Generate */}
           <Button
             variant="amber"
             size="sm"
             onClick={async () => {
-              toast.info("Gemini AI is generating next meeting agenda questions...");
+              toast.info("Generating meeting questions...");
               try {
                 const res = await fetch("/api/ai", {
                   method: "POST",
@@ -444,47 +467,51 @@ export function MeetingPrepModule({
                   if (saveRes.ok) {
                     const saveJson = await saveRes.json();
                     onQuestionsChange([...saveJson.questions, ...questions]);
-                    toast.success(`Gemini AI generated ${data.result.length} meeting agenda questions!`);
+                    toast.success(`Generated ${data.result.length} questions!`);
                   }
                 }
               } catch (err) {
-                toast.error("Failed to generate AI meeting questions");
+                toast.error("Failed to generate questions");
               }
             }}
-            className="gap-1.5 text-xs"
+            className="gap-1.5 text-xs h-8 px-2.5"
+            title="Generate meeting questions with AI"
           >
             <Sparkles className="w-3.5 h-3.5 text-amber-900" />
-            <span>AI Generate Questions</span>
+            <span>AI Questions</span>
           </Button>
 
           <Button
             variant="outline"
             size="sm"
             onClick={() => setIsTemplateModalOpen(true)}
-            className="gap-1.5 text-xs bg-white"
+            className="gap-1.5 text-xs h-8 px-2.5 bg-white"
+            title="Load standard templates"
           >
             <Layers className="w-3.5 h-3.5" />
-            <span>Load Template</span>
+            <span>Templates</span>
           </Button>
 
           <Button
             variant="outline"
             size="sm"
             onClick={() => setIsPickModalOpen(true)}
-            className="gap-1.5 text-xs bg-white text-blue-700 hover:bg-blue-50 border-blue-200"
+            className="gap-1.5 text-xs h-8 px-2.5 bg-white text-blue-700 hover:bg-blue-50 border-blue-200"
+            title="Select questions from project Q&A"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>+ Add from Q&A</span>
+            <span>Add from Q&A</span>
           </Button>
 
           <Button
             variant="secondary"
             size="sm"
             onClick={handleCopyAgendaMarkdown}
-            className="gap-1.5 text-xs"
+            className="gap-1.5 text-xs h-8 px-2.5"
+            title="Copy agenda to clipboard"
           >
             <Copy className="w-3.5 h-3.5" />
-            <span>Copy Agenda</span>
+            <span>Copy</span>
           </Button>
 
           {nextMeetingQuestions.length > 0 && (
@@ -492,10 +519,11 @@ export function MeetingPrepModule({
               variant="outline"
               size="sm"
               onClick={handleClearEntireAgenda}
-              className="gap-1.5 text-xs text-rose-700 bg-rose-50 hover:bg-rose-100 hover:text-rose-800 border-rose-200"
+              className="gap-1.5 text-xs h-8 px-2.5 text-rose-700 bg-rose-50 hover:bg-rose-100 hover:text-rose-800 border-rose-200"
+              title="Clear all questions"
             >
               <X className="w-3.5 h-3.5" />
-              <span>Clear Agenda</span>
+              <span>Clear</span>
             </Button>
           )}
 
@@ -505,10 +533,11 @@ export function MeetingPrepModule({
             onClick={() =>
               onScheduleMeetingWithQuestions(nextMeetingQuestions.map((q) => q.id))
             }
-            className="gap-1.5 text-xs"
+            className="gap-1.5 text-xs h-8 px-2.5"
+            title="Schedule meeting with these questions"
           >
             <Calendar className="w-3.5 h-3.5" />
-            <span>Schedule Meeting</span>
+            <span>Schedule</span>
           </Button>
         </div>
       </div>
@@ -520,6 +549,7 @@ export function MeetingPrepModule({
       >
         <div className="relative flex-1 w-full flex items-center">
           <input
+            id="meeting-quick-question-input"
             type="text"
             placeholder="Speak or type next meeting question (e.g. Kaunsa payment gateway sandbox use karna hai)..."
             value={quickQuestionText}
@@ -640,109 +670,164 @@ export function MeetingPrepModule({
 
                 {/* Question Items in this category */}
                 <div className="divide-y-2 divide-gray-100 p-2 sm:p-4 space-y-2">
-                  {categoryQuestions.map((q) => (
-                    <div
-                      key={q.id}
-                      className="p-3 rounded-md hover:bg-gray-50 flex items-start justify-between gap-3 transition group"
-                    >
-                      <div className="flex items-start gap-3 flex-1">
-                        <input
-                          type="checkbox"
-                          checked={q.forNextMeeting}
-                          onChange={() => handleToggleNextMeetingFlag(q.id, q.forNextMeeting)}
-                          title="Toggle Next Meeting inclusion"
-                          className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 mt-1 cursor-pointer shrink-0"
-                        />
+                  <AnimatePresence>
+                    {categoryQuestions.map((q) => {
+                      const isDeleting = Boolean(deletingQuestionIds[q.id]);
+                      return (
+                        <motion.div
+                          key={q.id}
+                          layout="position"
+                          initial={{ opacity: 0, y: 6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -6 }}
+                          transition={{ duration: 0.18, ease: "easeOut" }}
+                          className={cn(
+                            "p-3 rounded-md border flex items-start justify-between gap-3 transition-colors group",
+                            q.status === "ANSWERED"
+                              ? "bg-emerald-50/50 border-emerald-200"
+                              : "bg-white hover:bg-gray-50 border-gray-200",
+                            isDeleting && "opacity-50 pointer-events-none grayscale select-none ring-2 ring-red-300"
+                          )}
+                        >
+                          <div className="flex items-start gap-3 flex-1">
+                            <input
+                              type="checkbox"
+                              checked={q.status === "ANSWERED" || q.status === "ASKED"}
+                              onChange={() => handleToggleDiscussed(q.id, q.status)}
+                              disabled={isDeleting}
+                              title={
+                                q.status === "ANSWERED"
+                                  ? "Marked Discussed (Click to mark Pending)"
+                                  : "Click to mark as Discussed"
+                              }
+                              className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 mt-1 cursor-pointer shrink-0"
+                            />
 
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <p className="text-sm font-bold text-gray-900 leading-snug">
-                              {q.title}
-                            </p>
-                            <span
-                              className={cn(
-                                "text-[10px] font-extrabold uppercase px-1.5 py-0.5 rounded",
-                                q.priority === "URGENT"
-                                  ? "bg-red-100 text-red-700"
-                                  : q.priority === "HIGH"
-                                  ? "bg-amber-100 text-amber-800"
-                                  : "bg-blue-100 text-blue-700"
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p
+                                  className={cn(
+                                    "text-sm font-bold leading-snug",
+                                    q.status === "ANSWERED"
+                                      ? "text-emerald-950 line-through opacity-80"
+                                      : "text-gray-900"
+                                  )}
+                                >
+                                  {q.title}
+                                </p>
+                                <span
+                                  className={cn(
+                                    "text-[10px] font-extrabold uppercase px-1.5 py-0.5 rounded",
+                                    q.priority === "URGENT"
+                                      ? "bg-red-100 text-red-700"
+                                      : q.priority === "HIGH"
+                                      ? "bg-amber-100 text-amber-800"
+                                      : "bg-blue-100 text-blue-700"
+                                  )}
+                                >
+                                  {q.priority}
+                                </span>
+                              </div>
+
+                              {q.details && (
+                                <p className="text-xs text-gray-500 mt-0.5 whitespace-pre-wrap">
+                                  {q.details}
+                                </p>
                               )}
-                            >
-                              {q.priority}
-                            </span>
+                              {q.answers && q.answers.length > 0 && (
+                                <div className="mt-2 pl-3 border-l-2 border-emerald-500">
+                                  <span className="text-[10px] font-extrabold uppercase text-emerald-800">
+                                    Latest Decision:
+                                  </span>
+                                  <p className="text-xs text-emerald-900 font-medium whitespace-pre-wrap">
+                                    {q.answers[q.answers.length - 1].content}
+                                  </p>
+                                </div>
+                              )}
+                            </div>
                           </div>
 
-                          {q.details && (
-                            <p className="text-xs text-gray-500 mt-0.5 whitespace-pre-wrap">
-                              {q.details}
-                            </p>
-                          )}
-                          {q.answers && q.answers.length > 0 && (
-                            <div className="mt-2 pl-3 border-l-2 border-emerald-500">
-                              <span className="text-[10px] font-extrabold uppercase text-emerald-800">
-                                Latest Decision:
-                              </span>
-                              <p className="text-xs text-emerald-900 font-medium whitespace-pre-wrap">
-                                {q.answers[q.answers.length - 1].content}
-                              </p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
+                          {/* Right Action Controls: Status, Edit, Delete */}
+                          <div className="shrink-0 flex items-center gap-1.5 self-start">
+                            <select
+                              value={q.status}
+                              disabled={isDeleting}
+                              onChange={(e) => handleStatusChange(q.id, e.target.value)}
+                              className={cn(
+                                "h-7 px-2 rounded text-[11px] font-bold border-none outline-none cursor-pointer transition",
+                                q.status === "ANSWERED"
+                                  ? "bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
+                                  : q.status === "NEED_FOLLOWUP"
+                                  ? "bg-rose-100 text-rose-800 hover:bg-rose-200"
+                                  : "bg-amber-100 text-amber-800 hover:bg-amber-200"
+                              )}
+                            >
+                              <option value="PENDING">Pending</option>
+                              <option value="ASKED">Asked</option>
+                              <option value="ANSWERED">Answered</option>
+                              <option value="NEED_FOLLOWUP">Need Follow-up</option>
+                            </select>
 
-                      {/* Right Action Controls: Status, Edit, Delete */}
-                      <div className="shrink-0 flex items-center gap-1.5 self-start">
-                        <select
-                          value={q.status}
-                          onChange={(e) => handleStatusChange(q.id, e.target.value)}
-                          className={cn(
-                            "h-7 px-2 rounded text-[11px] font-bold border-none outline-none cursor-pointer transition",
-                            q.status === "ANSWERED"
-                              ? "bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
-                              : q.status === "NEED_FOLLOWUP"
-                              ? "bg-rose-100 text-rose-800 hover:bg-rose-200"
-                              : "bg-amber-100 text-amber-800 hover:bg-amber-200"
-                          )}
-                        >
-                          <option value="PENDING">Pending</option>
-                          <option value="ASKED">Asked</option>
-                          <option value="ANSWERED">Answered</option>
-                          <option value="NEED_FOLLOWUP">Need Follow-up</option>
-                        </select>
+                            {/* Edit Button */}
+                            <button
+                              type="button"
+                              disabled={isDeleting}
+                              onClick={() => handleOpenEditModal(q)}
+                              title="Edit question details"
+                              className="p-1.5 rounded text-gray-500 hover:text-blue-600 hover:bg-blue-50 transition"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
 
-                        {/* Edit Button */}
-                        <button
-                          type="button"
-                          onClick={() => handleOpenEditModal(q)}
-                          title="Edit question details"
-                          className="p-1.5 rounded text-gray-500 hover:text-blue-600 hover:bg-blue-50 transition"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
+                            {/* Remove from Agenda button */}
+                            <button
+                              type="button"
+                              disabled={isDeleting}
+                              onClick={() => handleRemoveFromAgenda(q.id)}
+                              title="Remove from meeting agenda (Keep question in Client Q&A)"
+                              className="p-1.5 rounded text-gray-400 hover:text-amber-700 hover:bg-amber-50 transition"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
 
-                        {/* Remove from Agenda button */}
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveFromAgenda(q.id)}
-                          title="Remove from meeting agenda (Keep question in Client Q&A)"
-                          className="p-1.5 rounded text-gray-400 hover:text-amber-700 hover:bg-amber-50 transition"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
+                            {/* Delete Question (Soft Delete) */}
+                            <button
+                              type="button"
+                              disabled={isDeleting}
+                              onClick={() => handleDeleteQuestion(q.id)}
+                              title="Delete question permanently (Soft delete)"
+                              className="p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 transition"
+                            >
+                              {isDeleting ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin text-red-600" />
+                              ) : (
+                                <Trash2 className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+                          </div>
+                        </motion.div>
+                      );
+                    })}
+                  </AnimatePresence>
 
-                        {/* Delete Question (Soft Delete) */}
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteQuestion(q.id)}
-                          title="Delete question permanently (Soft delete)"
-                          className="p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 transition"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                  {/* Quick Add to this Category */}
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setQuickQuestionCategory(category);
+                        const el = document.getElementById("meeting-quick-question-input");
+                        if (el) {
+                          el.focus();
+                          el.scrollIntoView({ behavior: "smooth", block: "center" });
+                        }
+                      }}
+                      className="w-full py-2.5 px-3 border-2 border-dashed border-gray-300 rounded-lg text-xs font-bold text-gray-500 hover:text-blue-600 hover:border-blue-400 hover:bg-blue-50/50 flex items-center justify-center gap-1.5 transition cursor-pointer"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Add question to {category}</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             );
