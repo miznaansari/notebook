@@ -34,6 +34,21 @@
     font-weight: 700;
   }
 
+  /* Standard text-sm on all form controls & prevent mobile auto-zoom */
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    font-size: 0.875rem; /* text-sm standard (14px) */
+  }
+
+  @media screen and (max-width: 768px) {
+    input:not([type="checkbox"]):not([type="radio"]),
+    select,
+    textarea {
+      font-size: 16px !important; /* 16px prevents iOS Safari automatic viewport zooming */
+    }
+  }
+
 /* Custom Flat Scrollbar */
   ::-webkit-scrollbar {
     width: 8px;

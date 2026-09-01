@@ -1341,7 +1341,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
               placeholder="Filter notes by title or tags..."
               value={searchNotes}
               onChange={(e) => setSearchNotes(e.target.value)}
-              className="w-full h-8 pl-8 pr-2.5 rounded-md bg-[#F3F4F6] text-xs font-semibold text-gray-900 placeholder:text-gray-400 border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] transition-all"
+              className="w-full h-8 pl-8 pr-2.5 rounded-md bg-[#F3F4F6] text-sm font-medium text-gray-900 placeholder:text-gray-400 border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] transition-all"
             />
           </div>
         </div>
@@ -1452,7 +1452,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
                       value={currentTags}
                       onChange={handleTagsChange}
                       placeholder="Add tags (e.g., Requirements)..."
-                      className="text-[11px] sm:text-xs text-gray-600 font-medium placeholder:text-gray-400 border-none outline-none w-full bg-transparent truncate"
+                      className="text-xs text-gray-600 font-medium placeholder:text-gray-400 border-none outline-none w-full bg-transparent truncate"
                     />
                   </div>
                 </div>

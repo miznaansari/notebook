@@ -201,7 +201,7 @@ export function TasksModule({
             placeholder="Speak or type follow-up task (e.g., Client se sandbox API key confirm karo)..."
             value={quickTitle}
             onChange={(e) => setQuickTitle(e.target.value)}
-            className="w-full h-11 pl-4 pr-44 rounded-md bg-[#F3F4F6] text-xs font-semibold text-gray-900 placeholder:text-gray-400 border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] transition"
+            className="w-full h-11 pl-4 pr-44 rounded-md bg-[#F3F4F6] text-sm font-medium text-gray-900 placeholder:text-gray-400 border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] transition"
           />
           <div className="absolute right-2 flex items-center gap-1">
             <VoiceMicButton
@@ -225,7 +225,7 @@ export function TasksModule({
         <select
           value={quickPriority}
           onChange={(e) => setQuickPriority(e.target.value as any)}
-          className="h-11 px-3 rounded-md bg-[#F3F4F6] text-xs font-bold text-gray-800 outline-none w-full sm:w-auto"
+          className="h-11 px-3 rounded-md bg-[#F3F4F6] text-sm font-semibold text-gray-800 outline-none w-full sm:w-auto"
         >
           <option value="LOW">Low Priority</option>
           <option value="MEDIUM">Medium Priority</option>
@@ -237,7 +237,7 @@ export function TasksModule({
           type="date"
           value={quickDueDate}
           onChange={(e) => setQuickDueDate(e.target.value)}
-          className="h-11 px-3 rounded-md bg-[#F3F4F6] text-xs font-semibold text-gray-800 outline-none w-full sm:w-auto"
+          className="h-11 px-3 rounded-md bg-[#F3F4F6] text-sm font-semibold text-gray-800 outline-none w-full sm:w-auto"
         />
 
         <Button

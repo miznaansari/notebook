@@ -689,7 +689,7 @@ export function QuestionsModule({
             placeholder="Search questions or answers..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full h-10 pl-9 pr-3 rounded-md bg-white text-xs font-semibold text-gray-900 placeholder:text-gray-400 border-2 border-transparent outline-none focus:border-[#3B82F6] transition-all"
+            className="w-full h-10 pl-9 pr-3 rounded-md bg-white text-sm font-medium text-gray-900 placeholder:text-gray-400 border-2 border-transparent outline-none focus:border-[#3B82F6] transition-all"
           />
         </div>
 
@@ -707,7 +707,7 @@ export function QuestionsModule({
                 setSelectedCategory(e.target.value);
               }
             }}
-            className="h-10 px-3 rounded-md bg-white text-xs font-bold text-gray-900 border-2 border-transparent focus:border-[#3B82F6] outline-none cursor-pointer"
+            className="h-10 px-3 rounded-md bg-white text-sm font-semibold text-gray-900 border-2 border-transparent focus:border-[#3B82F6] outline-none cursor-pointer"
           >
             <option value="ALL">All Categories</option>
             {existingCategories.map((c) => (
@@ -833,7 +833,7 @@ export function QuestionsModule({
                                 value={q.status}
                                 disabled={isDeleting}
                                 onChange={(e) => handleStatusChange(q.id, e.target.value)}
-                                className="h-8 px-2.5 rounded text-xs font-bold bg-[#F3F4F6] text-gray-900 border-none outline-none cursor-pointer hover:bg-gray-200 transition"
+                                className="h-8 px-2.5 rounded text-sm font-bold bg-[#F3F4F6] text-gray-900 border-none outline-none cursor-pointer hover:bg-gray-200 transition"
                               >
                                 <option value="PENDING">Pending</option>
                                 <option value="ASKED">Asked</option>
@@ -948,7 +948,7 @@ export function QuestionsModule({
                                   onKeyDown={(e) => {
                                     if (e.key === "Enter") handleAddAnswer(q.id);
                                   }}
-                                  className="w-full h-8 pl-3 pr-24 rounded-md bg-[#F3F4F6] text-xs font-medium text-gray-900 placeholder:text-gray-400 border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] transition"
+                                  className="w-full h-8 pl-3 pr-24 rounded-md bg-[#F3F4F6] text-sm font-medium text-gray-900 placeholder:text-gray-400 border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] transition"
                                 />
                                 <div className="absolute right-1">
                                   <VoiceMicButton
@@ -973,7 +973,7 @@ export function QuestionsModule({
                                     [q.id]: e.target.value,
                                   }))
                                 }
-                                className="h-8 px-2 rounded-md bg-[#F3F4F6] text-xs font-bold text-gray-700 outline-none"
+                                className="h-8 px-2 rounded-md bg-[#F3F4F6] text-sm font-bold text-gray-700 outline-none"
                               >
                                 <option value="Client">Client</option>
                                 <option value="Me">Me</option>
@@ -1087,7 +1087,7 @@ export function QuestionsModule({
                             <select
                               value={inlinePriority}
                               onChange={(e) => setInlinePriority(e.target.value as any)}
-                              className="w-full h-9 px-3 rounded-md bg-white text-xs font-bold text-gray-900 border border-gray-300 outline-none focus:border-[#3B82F6]"
+                              className="w-full h-9 px-3 rounded-md bg-white text-sm font-medium text-gray-900 border border-gray-300 outline-none focus:border-[#3B82F6]"
                             >
                               <option value="LOW">Low</option>
                               <option value="MEDIUM">Medium</option>
@@ -1430,7 +1430,7 @@ export function QuestionsModule({
               <select
                 value={editCategory}
                 onChange={(e) => setEditCategory(e.target.value)}
-                className="w-full h-11 px-3 rounded-md bg-[#F3F4F6] text-xs font-bold text-gray-800 outline-none border-2 border-transparent focus:bg-white focus:border-[#3B82F6]"
+                className="w-full h-11 px-3 rounded-md bg-[#F3F4F6] text-sm font-semibold text-gray-800 outline-none border-2 border-transparent focus:bg-white focus:border-[#3B82F6]"
               >
                 {existingCategories.map((c) => (
                   <option key={c} value={c}>
@@ -1448,7 +1448,7 @@ export function QuestionsModule({
               <select
                 value={editPriority}
                 onChange={(e) => setEditPriority(e.target.value as any)}
-                className="w-full h-11 px-3 rounded-md bg-[#F3F4F6] text-xs font-bold text-gray-800 outline-none border-2 border-transparent focus:bg-white focus:border-[#3B82F6]"
+                className="w-full h-11 px-3 rounded-md bg-[#F3F4F6] text-sm font-semibold text-gray-800 outline-none border-2 border-transparent focus:bg-white focus:border-[#3B82F6]"
               >
                 <option value="LOW">Low</option>
                 <option value="MEDIUM">Medium</option>

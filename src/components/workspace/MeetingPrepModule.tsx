@@ -17,6 +17,9 @@ import {
   Trash2,
   Loader2,
   X,
+  GripVertical,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -62,6 +65,12 @@ export function MeetingPrepModule({
   const [customCatInput, setCustomCatInput] = React.useState("");
   const [isAddingQuestion, setIsAddingQuestion] = React.useState(false);
   const [deletingQuestionIds, setDeletingQuestionIds] = React.useState<{ [key: string]: boolean }>({});
+
+  // Drag and Drop state
+  const [draggedQuestionId, setDraggedQuestionId] = React.useState<string | null>(null);
+  const [dragOverQuestionId, setDragOverQuestionId] = React.useState<string | null>(null);
+  const [dragOverCategory, setDragOverCategory] = React.useState<string | null>(null);
+  const [isSavingOrder, setIsSavingOrder] = React.useState(false);
 
   // Edit question modal state
   const [editingQuestion, setEditingQuestion] = React.useState<any | null>(null);
@@ -393,6 +402,88 @@ export function MeetingPrepModule({
     }
   };
 
+  // Drag and Drop Reordering Handlers
+  const handleReorderQuestions = async (
+    sourceQId: string,
+    targetQId: string | null,
+    targetCategory: string
+  ) => {
+    if (sourceQId === targetQId) return;
+
+    const sourceQ = questions.find((q) => q.id === sourceQId);
+    if (!sourceQ) return;
+
+    const currentList = [...questions];
+    const sourceIndex = currentList.findIndex((q) => q.id === sourceQId);
+    if (sourceIndex === -1) return;
+
+    const [moved] = currentList.splice(sourceIndex, 1);
+    const updatedMoved = { ...moved, category: targetCategory };
+
+    let insertIndex = currentList.length;
+    if (targetQId) {
+      const targetIdx = currentList.findIndex((q) => q.id === targetQId);
+      if (targetIdx !== -1) {
+        insertIndex = targetIdx;
+      }
+    } else {
+      let lastIdx = -1;
+      for (let i = 0; i < currentList.length; i++) {
+        if (currentList[i].category === targetCategory) {
+          lastIdx = i;
+        }
+      }
+      if (lastIdx !== -1) {
+        insertIndex = lastIdx + 1;
+      }
+    }
+
+    currentList.splice(insertIndex, 0, updatedMoved);
+
+    const reorderedQuestions = currentList.map((q, idx) => ({
+      ...q,
+      orderIndex: idx,
+    }));
+
+    onQuestionsChange(reorderedQuestions);
+
+    try {
+      setIsSavingOrder(true);
+      const items = reorderedQuestions.map((q, idx) => ({
+        id: q.id,
+        orderIndex: idx,
+        category: q.category,
+      }));
+
+      await fetch(`/api/projects/${projectId}/questions`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items }),
+      });
+    } catch (err) {
+      console.error("Failed to save reordered questions", err);
+    } finally {
+      setIsSavingOrder(false);
+      setDraggedQuestionId(null);
+      setDragOverQuestionId(null);
+      setDragOverCategory(null);
+    }
+  };
+
+  const handleMoveQuestion = (qId: string, direction: "up" | "down", category: string) => {
+    const categoryQuestions = questions.filter(
+      (q) => (q.status as string) !== "DELETED" && q.category === category
+    );
+    const currentIndex = categoryQuestions.findIndex((q) => q.id === qId);
+    if (currentIndex === -1) return;
+
+    const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= categoryQuestions.length) return;
+
+    const targetQ = categoryQuestions[targetIndex];
+    handleReorderQuestions(qId, targetQ.id, category);
+  };
+
   const handleCopyAgendaMarkdown = () => {
     let md = `# Next Meeting – Client Questions Agenda\n\n`;
     md += `**Project:** ${projectName}\n`;
@@ -555,7 +646,7 @@ export function MeetingPrepModule({
             value={quickQuestionText}
             onChange={(e) => setQuickQuestionText(e.target.value)}
             disabled={isAddingQuestion}
-            className="w-full h-11 pl-4 pr-44 rounded-md bg-[#F3F4F6] text-xs font-semibold text-gray-900 placeholder:text-gray-400 border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] transition disabled:opacity-50"
+            className="w-full h-11 pl-4 pr-44 rounded-md bg-[#F3F4F6] text-sm font-medium text-gray-900 placeholder:text-gray-400 border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] transition disabled:opacity-50"
           />
           <div className="absolute right-2 flex items-center gap-1">
             <VoiceMicButton
@@ -581,7 +672,7 @@ export function MeetingPrepModule({
             value={quickQuestionCategory}
             onChange={(e) => setQuickQuestionCategory(e.target.value)}
             disabled={isAddingQuestion}
-            className="h-11 px-3 rounded-md bg-[#F3F4F6] text-xs font-bold text-gray-800 outline-none w-full sm:w-auto border-2 border-transparent focus:bg-white focus:border-[#3B82F6]"
+            className="h-11 px-3 rounded-md bg-[#F3F4F6] text-sm font-semibold text-gray-800 outline-none w-full sm:w-auto border-2 border-transparent focus:bg-white focus:border-[#3B82F6]"
           >
             {allCategoryNames.map((c) => (
               <option key={c} value={c}>
@@ -597,7 +688,7 @@ export function MeetingPrepModule({
               placeholder="Type category..."
               value={customCatInput}
               onChange={(e) => setCustomCatInput(e.target.value)}
-              className="h-11 px-3 rounded-md bg-white border-2 border-blue-500 text-xs font-bold text-gray-900 outline-none w-full sm:w-40"
+              className="h-11 px-3 rounded-md bg-white border-2 border-blue-500 text-sm font-semibold text-gray-900 outline-none w-full sm:w-40"
               autoFocus
             />
           )}
@@ -651,7 +742,29 @@ export function MeetingPrepModule({
             return (
               <div
                 key={category}
-                className="bg-white rounded-lg border-2 border-gray-200 overflow-hidden"
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  if (dragOverCategory !== category) setDragOverCategory(category);
+                }}
+                onDragLeave={(e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                    if (dragOverCategory === category) setDragOverCategory(null);
+                  }
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (draggedQuestionId) {
+                    handleReorderQuestions(draggedQuestionId, null, category);
+                  }
+                }}
+                className={cn(
+                  "bg-white rounded-lg border-2 transition-all duration-200 overflow-hidden",
+                  dragOverCategory === category && !dragOverQuestionId
+                    ? "border-[#3B82F6] ring-2 ring-blue-200 bg-blue-50/20"
+                    : "border-gray-200"
+                )}
               >
                 {/* Category Header */}
                 <div className="bg-[#F3F4F6] px-5 py-3 border-b-2 border-gray-200 flex items-center justify-between">
@@ -671,25 +784,70 @@ export function MeetingPrepModule({
                 {/* Question Items in this category */}
                 <div className="divide-y-2 divide-gray-100 p-2 sm:p-4 space-y-2">
                   <AnimatePresence>
-                    {categoryQuestions.map((q) => {
+                    {categoryQuestions.map((q, catQuestionIndex) => {
                       const isDeleting = Boolean(deletingQuestionIds[q.id]);
+                      const isBeingDragged = draggedQuestionId === q.id;
+                      const isDragTarget = dragOverQuestionId === q.id;
+                      const isFirstInCategory = catQuestionIndex === 0;
+                      const isLastInCategory = catQuestionIndex === categoryQuestions.length - 1;
+
                       return (
                         <motion.div
                           key={q.id}
                           layout="position"
+                          draggable={!isDeleting}
+                          onDragStart={(e: any) => {
+                            setDraggedQuestionId(q.id);
+                            if (e.dataTransfer) {
+                              e.dataTransfer.setData("text/plain", q.id);
+                              e.dataTransfer.effectAllowed = "move";
+                            }
+                          }}
+                          onDragOver={(e: any) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+                            if (dragOverQuestionId !== q.id) setDragOverQuestionId(q.id);
+                            if (dragOverCategory !== category) setDragOverCategory(category);
+                          }}
+                          onDragLeave={() => {
+                            if (dragOverQuestionId === q.id) setDragOverQuestionId(null);
+                          }}
+                          onDrop={(e: any) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (draggedQuestionId && draggedQuestionId !== q.id) {
+                              handleReorderQuestions(draggedQuestionId, q.id, category);
+                            }
+                          }}
+                          onDragEnd={() => {
+                            setDraggedQuestionId(null);
+                            setDragOverQuestionId(null);
+                            setDragOverCategory(null);
+                          }}
                           initial={{ opacity: 0, y: 6 }}
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, y: -6 }}
                           transition={{ duration: 0.18, ease: "easeOut" }}
                           className={cn(
-                            "p-3 rounded-md border flex items-start justify-between gap-3 transition-colors group",
+                            "p-3 rounded-md border flex items-start justify-between gap-2.5 transition-all group select-none",
                             q.status === "ANSWERED"
                               ? "bg-emerald-50/50 border-emerald-200"
                               : "bg-white hover:bg-gray-50 border-gray-200",
-                            isDeleting && "opacity-50 pointer-events-none grayscale select-none ring-2 ring-red-300"
+                            isDeleting && "opacity-50 pointer-events-none grayscale select-none ring-2 ring-red-300",
+                            isBeingDragged && "opacity-30 scale-[0.98] border-dashed border-blue-400 bg-blue-50/30",
+                            isDragTarget && "border-t-4 border-t-[#3B82F6] shadow-sm bg-blue-50/40"
                           )}
                         >
-                          <div className="flex items-start gap-3 flex-1">
+                          {/* Drag Handle */}
+                          <div
+                            className="text-gray-300 group-hover:text-gray-600 cursor-grab active:cursor-grabbing p-1 -ml-1 mt-0.5 shrink-0 transition"
+                            title="Drag to rearrange agenda order"
+                          >
+                            <GripVertical className="w-4 h-4" />
+                          </div>
+
+                          <div className="flex items-start gap-3 flex-1 min-w-0">
                             <input
                               type="checkbox"
                               checked={q.status === "ANSWERED" || q.status === "ASKED"}
@@ -703,7 +861,7 @@ export function MeetingPrepModule({
                               className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 mt-1 cursor-pointer shrink-0"
                             />
 
-                            <div className="flex-1">
+                            <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 flex-wrap">
                                 <p
                                   className={cn(
@@ -717,7 +875,7 @@ export function MeetingPrepModule({
                                 </p>
                                 <span
                                   className={cn(
-                                    "text-[10px] font-extrabold uppercase px-1.5 py-0.5 rounded",
+                                    "text-[10px] font-extrabold uppercase px-1.5 py-0.5 rounded shrink-0",
                                     q.priority === "URGENT"
                                       ? "bg-red-100 text-red-700"
                                       : q.priority === "HIGH"
@@ -747,8 +905,30 @@ export function MeetingPrepModule({
                             </div>
                           </div>
 
-                          {/* Right Action Controls: Status, Edit, Delete */}
+                          {/* Right Action Controls: Reorder Up/Down, Status, Edit, Delete */}
                           <div className="shrink-0 flex items-center gap-1.5 self-start">
+                            {/* 1-Tap Reorder Buttons */}
+                            <div className="flex flex-col -my-1">
+                              <button
+                                type="button"
+                                disabled={isDeleting || isFirstInCategory}
+                                onClick={() => handleMoveQuestion(q.id, "up", category)}
+                                title="Move up in agenda"
+                                className="p-0.5 text-gray-400 hover:text-blue-600 disabled:opacity-20 transition"
+                              >
+                                <ChevronUp className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isDeleting || isLastInCategory}
+                                onClick={() => handleMoveQuestion(q.id, "down", category)}
+                                title="Move down in agenda"
+                                className="p-0.5 text-gray-400 hover:text-blue-600 disabled:opacity-20 transition"
+                              >
+                                <ChevronDown className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+
                             <select
                               value={q.status}
                               disabled={isDeleting}
@@ -915,7 +1095,7 @@ export function MeetingPrepModule({
               <select
                 value={editCategory}
                 onChange={(e) => setEditCategory(e.target.value)}
-                className="w-full h-11 px-3 rounded-md bg-[#F3F4F6] text-xs font-bold text-gray-800 outline-none border-2 border-transparent focus:bg-white focus:border-[#3B82F6]"
+                className="w-full h-11 px-3 rounded-md bg-[#F3F4F6] text-sm font-semibold text-gray-800 outline-none border-2 border-transparent focus:bg-white focus:border-[#3B82F6]"
               >
                 {allCategoryNames.map((c) => (
                   <option key={c} value={c}>
@@ -930,7 +1110,7 @@ export function MeetingPrepModule({
                   placeholder="Enter custom category name..."
                   value={editCustomCatInput}
                   onChange={(e) => setEditCustomCatInput(e.target.value)}
-                  className="w-full h-10 px-3 mt-2 rounded-md bg-white border-2 border-blue-400 text-xs font-bold text-gray-900 outline-none"
+                  className="w-full h-10 px-3 mt-2 rounded-md bg-white border-2 border-blue-400 text-sm font-semibold text-gray-900 outline-none"
                   autoFocus
                 />
               )}
@@ -943,7 +1123,7 @@ export function MeetingPrepModule({
               <select
                 value={editPriority}
                 onChange={(e) => setEditPriority(e.target.value)}
-                className="w-full h-11 px-3 rounded-md bg-[#F3F4F6] text-xs font-bold text-gray-800 outline-none border-2 border-transparent focus:bg-white focus:border-[#3B82F6]"
+                className="w-full h-11 px-3 rounded-md bg-[#F3F4F6] text-sm font-semibold text-gray-800 outline-none border-2 border-transparent focus:bg-white focus:border-[#3B82F6]"
               >
                 <option value="LOW">Low</option>
                 <option value="MEDIUM">Medium</option>
@@ -959,7 +1139,7 @@ export function MeetingPrepModule({
               <select
                 value={editStatus}
                 onChange={(e) => setEditStatus(e.target.value)}
-                className="w-full h-11 px-3 rounded-md bg-[#F3F4F6] text-xs font-bold text-gray-800 outline-none border-2 border-transparent focus:bg-white focus:border-[#3B82F6]"
+                className="w-full h-11 px-3 rounded-md bg-[#F3F4F6] text-sm font-semibold text-gray-800 outline-none border-2 border-transparent focus:bg-white focus:border-[#3B82F6]"
               >
                 <option value="PENDING">Pending</option>
                 <option value="ASKED">Asked</option>

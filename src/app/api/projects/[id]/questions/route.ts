@@ -169,3 +169,50 @@ export async function POST(
     return NextResponse.json({ error: "Failed to create question" }, { status: 500 });
   }
 }
+
+// PATCH /api/projects/[id]/questions - Batch reorder questions and update categories
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const auth = await getAuthUserFromRequest(req);
+    if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    const { id: projectId } = await params;
+
+    const project = await db.project.findFirst({
+      where: { id: projectId, userId: auth.userId },
+    });
+    if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
+
+    const body = await req.json();
+    const { items } = body; // Array of { id: string, orderIndex: number, category?: string }
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return NextResponse.json({ error: "Invalid items array" }, { status: 400 });
+    }
+
+    // Execute bulk updates in a transaction
+    await db.$transaction(
+      items.map((item) =>
+        db.question.update({
+          where: { id: item.id, projectId },
+          data: {
+            orderIndex: typeof item.orderIndex === "number" ? item.orderIndex : undefined,
+            category: typeof item.category === "string" ? item.category : undefined,
+          },
+        })
+      )
+    );
+
+    await db.project.update({
+      where: { id: projectId },
+      data: { updatedAt: new Date() },
+    });
+
+    return NextResponse.json({ success: true, count: items.length });
+  } catch (error) {
+    return NextResponse.json({ error: "Failed to reorder questions" }, { status: 500 });
+  }
+}
