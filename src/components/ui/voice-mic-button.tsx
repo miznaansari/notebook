@@ -200,45 +200,47 @@ export function VoiceMicButton({
         <button
           type="button"
           onClick={stopRecording}
-          className="h-8 px-3 rounded-lg bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white text-xs font-bold flex items-center gap-2 shadow-sm shadow-red-500/30 animate-pulse cursor-pointer select-none transition-all"
+          className="h-8 px-2 sm:px-3 rounded-lg bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white text-xs font-bold flex items-center gap-1.5 sm:gap-2 shadow-sm shadow-red-500/30 animate-pulse cursor-pointer select-none transition-all shrink-0"
           title="Click to stop and finalize with Sarvam AI"
         >
-          <span className="relative flex h-2 w-2">
+          <span className="relative flex h-2 w-2 shrink-0">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
             <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
           </span>
-          <span>Live ({formatTimer(recordingSeconds)})</span>
+          <span className="hidden sm:inline">Live ({formatTimer(recordingSeconds)})</span>
+          <span className="sm:hidden text-[11px]">{formatTimer(recordingSeconds)}</span>
           <span className="text-[10px] bg-white/20 px-1 py-0.2 rounded uppercase font-semibold">Stop</span>
         </button>
       ) : isProcessing ? (
         <button
           type="button"
           disabled
-          className="h-8 px-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold flex items-center gap-2 cursor-wait select-none"
+          className="h-8 px-2 sm:px-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold flex items-center gap-1.5 sm:gap-2 cursor-wait select-none shrink-0"
         >
-          <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-600" />
-          <span>Processing Voice...</span>
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-600 shrink-0" />
+          <span className="hidden sm:inline">Processing Voice...</span>
+          <span className="sm:hidden text-[11px]">Processing...</span>
         </button>
       ) : (
-        <div className="inline-flex items-center rounded-lg shadow-xs overflow-hidden border border-rose-200 bg-rose-50/70 hover:bg-rose-100/80 transition-colors">
+        <div className="inline-flex items-center rounded-lg shadow-xs overflow-hidden border border-rose-200 bg-rose-50/70 hover:bg-rose-100/80 transition-colors shrink-0">
           <button
             type="button"
             onClick={startRecording}
             className={cn(
-              "h-8 px-2.5 text-xs font-semibold text-rose-700 flex items-center gap-1.5 cursor-pointer transition-colors select-none",
+              "h-8 px-2 sm:px-2.5 text-xs font-semibold text-rose-700 flex items-center gap-1.5 cursor-pointer transition-colors select-none",
               className
             )}
             title="Real-Time Voice Dictation (Speak Hindi -> Generates Hinglish in real-time)"
           >
             <Mic className="w-3.5 h-3.5 text-rose-600 shrink-0" strokeWidth={2.2} />
-            <span>{label}</span>
+            {label && <span className="hidden sm:inline">{label}</span>}
           </button>
 
           {showModeSelector && (
             <button
               type="button"
               onClick={() => setIsMenuOpen((prev) => !prev)}
-              className="h-8 px-1.5 border-l border-rose-200 text-rose-600 hover:text-rose-800 hover:bg-rose-200/50 flex items-center justify-center transition-colors cursor-pointer"
+              className="h-8 px-1 sm:px-1.5 border-l border-rose-200 text-rose-600 hover:text-rose-800 hover:bg-rose-200/50 flex items-center justify-center transition-colors cursor-pointer"
               title="Change Voice Mode"
             >
               <ChevronDown className="w-3 h-3" />
