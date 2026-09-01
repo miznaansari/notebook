@@ -28,6 +28,9 @@ export async function GET(
           ],
         },
         questions: {
+          where: {
+            status: { not: "DELETED" },
+          },
           include: {
             answers: {
               orderBy: { createdAt: "desc" },

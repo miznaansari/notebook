@@ -14,6 +14,7 @@ import {
   Save,
   HelpCircle,
   CheckSquare,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -172,6 +173,33 @@ export function MeetingsModule({
     }
   };
 
+  const handleUnlinkQuestionFromMeeting = async (meetingId: string, questionId: string) => {
+    const currentMeeting = meetings.find((m) => m.id === meetingId);
+    if (!currentMeeting) return;
+
+    const updatedQuestionIds = (currentMeeting.meetingQuestions || [])
+      .filter((mq) => mq.question.id !== questionId)
+      .map((mq) => mq.question.id);
+
+    try {
+      const res = await fetch(`/api/projects/${projectId}/meetings/${meetingId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ linkedQuestionIds: updatedQuestionIds }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        onMeetingsChange(
+          meetings.map((m) => (m.id === meetingId ? data.meeting : m))
+        );
+        toast.success("Question removed from meeting agenda");
+      }
+    } catch (err) {
+      toast.error("Failed to remove question from meeting agenda");
+    }
+  };
+
   const handleUpdateNotes = async (meetingId: string, updatedNotes: string) => {
     try {
       const res = await fetch(`/api/projects/${projectId}/meetings/${meetingId}`, {
@@ -320,17 +348,27 @@ export function MeetingsModule({
                       {meeting.meetingQuestions.map((mq) => (
                         <div
                           key={mq.question.id}
-                          className="bg-white p-2.5 rounded-md border border-gray-200 flex items-start gap-2"
+                          className="bg-white p-2.5 rounded-md border border-gray-200 flex items-start justify-between gap-2 group"
                         >
-                          <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0 mt-1.5" />
-                          <div className="min-w-0">
-                            <p className="text-xs font-bold text-gray-900 truncate">
-                              {mq.question.title}
-                            </p>
-                            <span className="text-[10px] text-gray-500 font-semibold uppercase">
-                              {mq.question.category}
-                            </span>
+                          <div className="flex items-start gap-2 min-w-0">
+                            <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0 mt-1.5" />
+                            <div className="min-w-0">
+                              <p className="text-xs font-bold text-gray-900 truncate">
+                                {mq.question.title}
+                              </p>
+                              <span className="text-[10px] text-gray-500 font-semibold uppercase">
+                                {mq.question.category}
+                              </span>
+                            </div>
                           </div>
+                          <button
+                            type="button"
+                            onClick={() => handleUnlinkQuestionFromMeeting(meeting.id, mq.question.id)}
+                            title="Remove question from this meeting"
+                            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-600 p-0.5 transition"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       ))}
                     </div>

@@ -301,10 +301,17 @@ export default function WorkspacePage() {
                 <QuestionsModule
                   projectId={activeProjectData.id}
                   questions={activeProjectData.questions || []}
+                  categories={activeProjectData.categories || []}
                   onQuestionsChange={(newQuestions) => {
                     setActiveProjectData((prev: any) => ({
                       ...prev,
                       questions: newQuestions,
+                    }));
+                  }}
+                  onCategoriesChange={(newCategories) => {
+                    setActiveProjectData((prev: any) => ({
+                      ...prev,
+                      categories: newCategories,
                     }));
                   }}
                 />
@@ -316,10 +323,17 @@ export default function WorkspacePage() {
                   projectName={activeProjectData.name}
                   clientName={activeProjectData.clientName}
                   questions={activeProjectData.questions || []}
+                  categories={activeProjectData.categories || []}
                   onQuestionsChange={(newQuestions) => {
                     setActiveProjectData((prev: any) => ({
                       ...prev,
                       questions: newQuestions,
+                    }));
+                  }}
+                  onCategoriesChange={(newCategories) => {
+                    setActiveProjectData((prev: any) => ({
+                      ...prev,
+                      categories: newCategories,
                     }));
                   }}
                   onNavigateToMeetings={() => setActiveTab("meetings")}

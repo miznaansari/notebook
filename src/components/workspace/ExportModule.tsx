@@ -52,10 +52,11 @@ export function ExportModule({ project }: ExportModuleProps) {
 
     if (exportType === "FULL" || exportType === "QA_MATRIX" || exportType === "MEETING_PREP") {
       md += `## ❓ Client Questions & Decisions\n\n`;
+      const activeQuestions = project.questions.filter((q) => q.status !== "DELETED");
       const questionsToInclude =
         exportType === "MEETING_PREP"
-          ? project.questions.filter((q) => q.forNextMeeting || q.status !== "ANSWERED")
-          : project.questions;
+          ? activeQuestions.filter((q) => q.forNextMeeting || q.status !== "ANSWERED")
+          : activeQuestions;
 
       questionsToInclude.forEach((q, idx) => {
         md += `### ${idx + 1}. [${q.status.replace("_", " ")}] ${q.title}\n`;
@@ -212,7 +213,7 @@ export function ExportModule({ project }: ExportModuleProps) {
               2. Client Questions & Verified Decisions
             </h2>
             <div className="space-y-4">
-              {project.questions.map((q, idx) => (
+              {project.questions.filter((q) => q.status !== "DELETED").map((q, idx) => (
                 <div
                   key={q.id}
                   className="p-4 rounded-lg border-2 border-gray-200 bg-white"

@@ -51,7 +51,8 @@ export function WorkspaceHeader({
   onDeleteProject,
   onToggleSidebar,
 }: WorkspaceHeaderProps) {
-  const nextMeetingQuestions = project.questions.filter((q) => q.forNextMeeting).length;
+  const activeQuestions = project.questions.filter((q) => q.status !== "DELETED");
+  const nextMeetingQuestions = activeQuestions.filter((q) => q.forNextMeeting).length;
   const pendingTasks = project.tasks.filter((t) => t.status !== "COMPLETED").length;
   const mobileNavRef = React.useRef<HTMLDivElement>(null);
 
@@ -74,7 +75,7 @@ export function WorkspaceHeader({
       label: "Client Q&A",
       mobileLabel: "Q&A",
       icon: HelpCircle,
-      count: project.questions.length,
+      count: activeQuestions.length,
     },
     {
       id: "meeting-prep",

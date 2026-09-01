@@ -28,7 +28,7 @@ export async function GET(
     const questions = await db.question.findMany({
       where: {
         projectId,
-        status: status && status !== "ALL" ? status : undefined,
+        status: status && status !== "ALL" ? status : { not: "DELETED" },
         category: category && category !== "ALL" ? category : undefined,
         forNextMeeting: forNextMeeting === "true" ? true : undefined,
         OR: query
@@ -120,11 +120,25 @@ export async function POST(
       return NextResponse.json({ error: "Question title is required." }, { status: 400 });
     }
 
+    const categoryName = category?.trim() || "General";
+
+    // Auto-create category in DB if it doesn't exist
+    if (categoryName) {
+      const existingCat = await db.questionCategory.findFirst({
+        where: { projectId, name: categoryName },
+      });
+      if (!existingCat) {
+        await db.questionCategory.create({
+          data: { name: categoryName, projectId },
+        });
+      }
+    }
+
     const question = await db.question.create({
       data: {
         title: title.trim(),
         details: details?.trim() || null,
-        category: category?.trim() || "General",
+        category: categoryName,
         status: status || "PENDING",
         priority: priority || "MEDIUM",
         forNextMeeting: Boolean(forNextMeeting),

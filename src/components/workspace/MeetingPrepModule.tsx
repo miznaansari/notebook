@@ -13,12 +13,16 @@ import {
   Clock,
   ArrowRight,
   Download,
-  BookOpen,
+  Edit2,
+  Trash2,
+  Loader2,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { AIMagicButton } from "@/components/ui/ai-magic-button";
 import { VoiceMicButton } from "@/components/ui/voice-mic-button";
 import { SYSTEM_TEMPLATES } from "@/lib/templates";
@@ -30,7 +34,9 @@ interface MeetingPrepModuleProps {
   projectName: string;
   clientName?: string | null;
   questions: any[];
+  categories?: any[];
   onQuestionsChange: (questions: any[]) => void;
+  onCategoriesChange?: (categories: any[]) => void;
   onNavigateToMeetings: () => void;
   onScheduleMeetingWithQuestions: (questionIds: string[]) => void;
 }
@@ -40,23 +46,54 @@ export function MeetingPrepModule({
   projectName,
   clientName,
   questions,
+  categories = [],
   onQuestionsChange,
+  onCategoriesChange,
   onNavigateToMeetings,
   onScheduleMeetingWithQuestions,
 }: MeetingPrepModuleProps) {
   const [isTemplateModalOpen, setIsTemplateModalOpen] = React.useState(false);
+  const [isPickModalOpen, setIsPickModalOpen] = React.useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = React.useState(SYSTEM_TEMPLATES[0].id);
   const [isImporting, setIsImporting] = React.useState(false);
   const [quickQuestionText, setQuickQuestionText] = React.useState("");
   const [quickQuestionCategory, setQuickQuestionCategory] = React.useState("User Management");
+  const [customCatInput, setCustomCatInput] = React.useState("");
+  const [isAddingQuestion, setIsAddingQuestion] = React.useState(false);
 
-  // Questions marked for next meeting or still pending/need-followup
+  // Edit question modal state
+  const [editingQuestion, setEditingQuestion] = React.useState<any | null>(null);
+  const [editTitle, setEditTitle] = React.useState("");
+  const [editDetails, setEditDetails] = React.useState("");
+  const [editCategory, setEditCategory] = React.useState("User Management");
+  const [editCustomCatInput, setEditCustomCatInput] = React.useState("");
+  const [editPriority, setEditPriority] = React.useState<string>("MEDIUM");
+  const [editStatus, setEditStatus] = React.useState<string>("PENDING");
+  const [editForNextMeeting, setEditForNextMeeting] = React.useState(true);
+  const [isSavingEdit, setIsSavingEdit] = React.useState(false);
+
+  // Dynamic list of categories from DB, prop and active questions
+  const allCategoryNames = React.useMemo(() => {
+    const list = [
+      "General",
+      "User Management",
+      "Payment",
+      "Reports",
+      "Technical",
+      "Architecture",
+      ...(categories?.map((c: any) => c.name) || []),
+      ...questions.map((q) => q.category),
+    ].filter(Boolean);
+    return Array.from(new Set(list));
+  }, [categories, questions]);
+
+  // Questions explicitly marked for next meeting agenda (excluding soft-deleted)
   const nextMeetingQuestions = questions.filter(
-    (q) => q.forNextMeeting || q.status === "PENDING" || q.status === "NEED_FOLLOWUP"
+    (q) => q.status !== "DELETED" && Boolean(q.forNextMeeting)
   );
 
   // Group questions by category
-  const categories = Array.from(new Set(nextMeetingQuestions.map((q) => q.category)));
+  const categoriesList = Array.from(new Set(nextMeetingQuestions.map((q) => q.category)));
 
   const handleImportTemplate = async () => {
     setIsImporting(true);
@@ -92,13 +129,19 @@ export function MeetingPrepModule({
     e.preventDefault();
     if (!quickQuestionText.trim()) return;
 
+    const catToUse =
+      quickQuestionCategory === "__CUSTOM__"
+        ? customCatInput.trim() || "General"
+        : quickQuestionCategory;
+
+    setIsAddingQuestion(true);
     try {
       const res = await fetch(`/api/projects/${projectId}/questions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: quickQuestionText.trim(),
-          category: quickQuestionCategory,
+          category: catToUse,
           status: "PENDING",
           priority: "HIGH",
           forNextMeeting: true,
@@ -109,14 +152,29 @@ export function MeetingPrepModule({
         const data = await res.json();
         onQuestionsChange([data.question, ...questions]);
         setQuickQuestionText("");
+        setCustomCatInput("");
+        if (quickQuestionCategory === "__CUSTOM__") {
+          setQuickQuestionCategory(catToUse);
+        }
         toast.success("Question added to meeting agenda!");
+      } else {
+        toast.error("Failed to add question");
       }
     } catch (err) {
       toast.error("Failed to add question");
+    } finally {
+      setIsAddingQuestion(false);
     }
   };
 
   const handleToggleNextMeetingFlag = async (questionId: string, currentVal: boolean) => {
+    // Instant optimistic update
+    onQuestionsChange(
+      questions.map((q) =>
+        q.id === questionId ? { ...q, forNextMeeting: !currentVal } : q
+      )
+    );
+
     try {
       const res = await fetch(`/api/projects/${projectId}/questions/${questionId}`, {
         method: "PUT",
@@ -125,14 +183,191 @@ export function MeetingPrepModule({
       });
 
       if (res.ok) {
+        const data = await res.json();
+        onQuestionsChange(
+          questions.map((q) => (q.id === questionId ? data.question : q))
+        );
+        toast.success(
+          !currentVal
+            ? "Question added to Next Meeting Agenda"
+            : "Removed from Next Meeting Agenda"
+        );
+      } else {
         onQuestionsChange(
           questions.map((q) =>
-            q.id === questionId ? { ...q, forNextMeeting: !currentVal } : q
+            q.id === questionId ? { ...q, forNextMeeting: currentVal } : q
           )
         );
+        toast.error("Failed to update agenda flag");
+      }
+    } catch (err) {
+      onQuestionsChange(
+        questions.map((q) =>
+          q.id === questionId ? { ...q, forNextMeeting: currentVal } : q
+        )
+      );
+      toast.error("Failed to update agenda flag");
+    }
+  };
+
+  const handleRemoveFromAgenda = async (questionId: string) => {
+    // Instant optimistic update
+    onQuestionsChange(
+      questions.map((q) =>
+        q.id === questionId ? { ...q, forNextMeeting: false } : q
+      )
+    );
+
+    try {
+      const res = await fetch(`/api/projects/${projectId}/questions/${questionId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ forNextMeeting: false }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        onQuestionsChange(
+          questions.map((q) => (q.id === questionId ? data.question : q))
+        );
+        toast.success("Question removed from meeting agenda");
+      } else {
+        onQuestionsChange(
+          questions.map((q) =>
+            q.id === questionId ? { ...q, forNextMeeting: true } : q
+          )
+        );
+        toast.error("Failed to remove question from agenda");
+      }
+    } catch (err) {
+      onQuestionsChange(
+        questions.map((q) =>
+          q.id === questionId ? { ...q, forNextMeeting: true } : q
+        )
+      );
+      toast.error("Failed to remove question from agenda");
+    }
+  };
+
+  const handleClearEntireAgenda = async () => {
+    if (nextMeetingQuestions.length === 0) return;
+    if (!confirm(`Are you sure you want to remove all ${nextMeetingQuestions.length} questions from the meeting agenda?`)) return;
+
+    try {
+      const promises = nextMeetingQuestions.map((q) =>
+        fetch(`/api/projects/${projectId}/questions/${q.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ forNextMeeting: false }),
+        })
+      );
+      await Promise.all(promises);
+
+      onQuestionsChange(
+        questions.map((q) => ({ ...q, forNextMeeting: false }))
+      );
+      toast.success("Cleared all questions from meeting agenda!");
+    } catch (err) {
+      toast.error("Failed to clear agenda");
+    }
+  };
+
+  const handleStatusChange = async (questionId: string, newStatus: string) => {
+    try {
+      const res = await fetch(`/api/projects/${projectId}/questions/${questionId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+
+      if (res.ok) {
+        onQuestionsChange(
+          questions.map((q) =>
+            q.id === questionId ? { ...q, status: newStatus } : q
+          )
+        );
+        toast.success(`Status updated to ${newStatus.replace("_", " ")}`);
+      }
+    } catch (err) {
+      toast.error("Failed to update status");
+    }
+  };
+
+  const handleOpenEditModal = (q: any) => {
+    setEditingQuestion(q);
+    setEditTitle(q.title || "");
+    setEditDetails(q.details || "");
+    setEditCategory(q.category || "General");
+    setEditCustomCatInput("");
+    setEditPriority(q.priority || "MEDIUM");
+    setEditStatus(q.status || "PENDING");
+    setEditForNextMeeting(Boolean(q.forNextMeeting));
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingQuestion || !editTitle.trim()) return;
+
+    const catToUse =
+      editCategory === "__CUSTOM__"
+        ? editCustomCatInput.trim() || "General"
+        : editCategory;
+
+    setIsSavingEdit(true);
+    try {
+      const res = await fetch(
+        `/api/projects/${projectId}/questions/${editingQuestion.id}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: editTitle.trim(),
+            details: editDetails.trim() || null,
+            category: catToUse,
+            priority: editPriority,
+            status: editStatus,
+            forNextMeeting: editForNextMeeting,
+          }),
+        }
+      );
+
+      if (res.ok) {
+        const data = await res.json();
+        onQuestionsChange(
+          questions.map((q) => (q.id === editingQuestion.id ? data.question : q))
+        );
+        toast.success("Question updated successfully!");
+        setEditingQuestion(null);
+      } else {
+        toast.error("Failed to update question");
       }
     } catch (err) {
       toast.error("Failed to update question");
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
+  const handleDeleteQuestion = async (questionId: string) => {
+    if (!confirm("Are you sure you want to delete this question?")) return;
+
+    try {
+      const res = await fetch(`/api/projects/${projectId}/questions/${questionId}`, {
+        method: "DELETE",
+      });
+
+      if (res.ok) {
+        onQuestionsChange(
+          questions.map((q) =>
+            q.id === questionId ? { ...q, status: "DELETED", forNextMeeting: false } : q
+          ).filter((q) => q.status !== "DELETED")
+        );
+        toast.success("Question deleted successfully");
+      } else {
+        toast.error("Failed to delete question");
+      }
+    } catch (err) {
+      toast.error("Failed to delete question");
     }
   };
 
@@ -233,6 +468,16 @@ export function MeetingPrepModule({
           </Button>
 
           <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsPickModalOpen(true)}
+            className="gap-1.5 text-xs bg-white text-blue-700 hover:bg-blue-50 border-blue-200"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>+ Add from Q&A</span>
+          </Button>
+
+          <Button
             variant="secondary"
             size="sm"
             onClick={handleCopyAgendaMarkdown}
@@ -241,6 +486,18 @@ export function MeetingPrepModule({
             <Copy className="w-3.5 h-3.5" />
             <span>Copy Agenda</span>
           </Button>
+
+          {nextMeetingQuestions.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleClearEntireAgenda}
+              className="gap-1.5 text-xs text-rose-700 bg-rose-50 hover:bg-rose-100 hover:text-rose-800 border-rose-200"
+            >
+              <X className="w-3.5 h-3.5" />
+              <span>Clear Agenda</span>
+            </Button>
+          )}
 
           <Button
             variant="emerald"
@@ -267,7 +524,8 @@ export function MeetingPrepModule({
             placeholder="Speak or type next meeting question (e.g. Kaunsa payment gateway sandbox use karna hai)..."
             value={quickQuestionText}
             onChange={(e) => setQuickQuestionText(e.target.value)}
-            className="w-full h-11 pl-4 pr-44 rounded-md bg-[#F3F4F6] text-xs font-semibold text-gray-900 placeholder:text-gray-400 border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] transition"
+            disabled={isAddingQuestion}
+            className="w-full h-11 pl-4 pr-44 rounded-md bg-[#F3F4F6] text-xs font-semibold text-gray-900 placeholder:text-gray-400 border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] transition disabled:opacity-50"
           />
           <div className="absolute right-2 flex items-center gap-1">
             <VoiceMicButton
@@ -288,27 +546,51 @@ export function MeetingPrepModule({
           </div>
         </div>
 
-        <select
-          value={quickQuestionCategory}
-          onChange={(e) => setQuickQuestionCategory(e.target.value)}
-          className="h-11 px-3 rounded-md bg-[#F3F4F6] text-xs font-bold text-gray-800 outline-none w-full sm:w-auto"
-        >
-          <option value="User Management">User Management</option>
-          <option value="Payment">Payment</option>
-          <option value="Reports">Reports</option>
-          <option value="Technical">Technical</option>
-          <option value="Architecture">Architecture</option>
-          <option value="General">General</option>
-        </select>
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
+          <select
+            value={quickQuestionCategory}
+            onChange={(e) => setQuickQuestionCategory(e.target.value)}
+            disabled={isAddingQuestion}
+            className="h-11 px-3 rounded-md bg-[#F3F4F6] text-xs font-bold text-gray-800 outline-none w-full sm:w-auto border-2 border-transparent focus:bg-white focus:border-[#3B82F6]"
+          >
+            {allCategoryNames.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+            <option value="__CUSTOM__">+ Add Custom Category...</option>
+          </select>
+
+          {quickQuestionCategory === "__CUSTOM__" && (
+            <input
+              type="text"
+              placeholder="Type category..."
+              value={customCatInput}
+              onChange={(e) => setCustomCatInput(e.target.value)}
+              className="h-11 px-3 rounded-md bg-white border-2 border-blue-500 text-xs font-bold text-gray-900 outline-none w-full sm:w-40"
+              autoFocus
+            />
+          )}
+        </div>
 
         <Button
           type="submit"
           variant="primary"
           size="md"
-          className="w-full sm:w-auto gap-1 text-xs shrink-0"
+          disabled={isAddingQuestion || !quickQuestionText.trim()}
+          className="w-full sm:w-auto gap-1.5 text-xs shrink-0"
         >
-          <Plus className="w-4 h-4" />
-          <span>Add to Agenda</span>
+          {isAddingQuestion ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>Adding...</span>
+            </>
+          ) : (
+            <>
+              <Plus className="w-4 h-4" />
+              <span>Add to Agenda</span>
+            </>
+          )}
         </Button>
       </form>
 
@@ -332,7 +614,7 @@ export function MeetingPrepModule({
         </div>
       ) : (
         <div className="space-y-6">
-          {categories.map((category, idx) => {
+          {categoriesList.map((category, idx) => {
             const categoryQuestions = nextMeetingQuestions.filter(
               (q) => q.category === category
             );
@@ -361,23 +643,38 @@ export function MeetingPrepModule({
                   {categoryQuestions.map((q) => (
                     <div
                       key={q.id}
-                      className="p-3 rounded-md hover:bg-gray-50 flex items-start justify-between gap-3 transition"
+                      className="p-3 rounded-md hover:bg-gray-50 flex items-start justify-between gap-3 transition group"
                     >
-                      <div className="flex items-start gap-3">
+                      <div className="flex items-start gap-3 flex-1">
                         <input
                           type="checkbox"
                           checked={q.forNextMeeting}
                           onChange={() => handleToggleNextMeetingFlag(q.id, q.forNextMeeting)}
                           title="Toggle Next Meeting inclusion"
-                          className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 mt-1 cursor-pointer"
+                          className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 mt-1 cursor-pointer shrink-0"
                         />
 
-                        <div>
-                          <p className="text-sm font-bold text-gray-900 leading-snug">
-                            {q.title}
-                          </p>
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="text-sm font-bold text-gray-900 leading-snug">
+                              {q.title}
+                            </p>
+                            <span
+                              className={cn(
+                                "text-[10px] font-extrabold uppercase px-1.5 py-0.5 rounded",
+                                q.priority === "URGENT"
+                                  ? "bg-red-100 text-red-700"
+                                  : q.priority === "HIGH"
+                                  ? "bg-amber-100 text-amber-800"
+                                  : "bg-blue-100 text-blue-700"
+                              )}
+                            >
+                              {q.priority}
+                            </span>
+                          </div>
+
                           {q.details && (
-                            <p className="text-xs text-gray-500 mt-0.5">
+                            <p className="text-xs text-gray-500 mt-0.5 whitespace-pre-wrap">
                               {q.details}
                             </p>
                           )}
@@ -386,7 +683,7 @@ export function MeetingPrepModule({
                               <span className="text-[10px] font-extrabold uppercase text-emerald-800">
                                 Latest Decision:
                               </span>
-                              <p className="text-xs text-emerald-900 font-medium">
+                              <p className="text-xs text-emerald-900 font-medium whitespace-pre-wrap">
                                 {q.answers[q.answers.length - 1].content}
                               </p>
                             </div>
@@ -394,19 +691,55 @@ export function MeetingPrepModule({
                         </div>
                       </div>
 
-                      <div className="shrink-0 flex items-center gap-2">
-                        <span
+                      {/* Right Action Controls: Status, Edit, Delete */}
+                      <div className="shrink-0 flex items-center gap-1.5 self-start">
+                        <select
+                          value={q.status}
+                          onChange={(e) => handleStatusChange(q.id, e.target.value)}
                           className={cn(
-                            "text-[10px] font-extrabold uppercase px-2 py-0.5 rounded",
+                            "h-7 px-2 rounded text-[11px] font-bold border-none outline-none cursor-pointer transition",
                             q.status === "ANSWERED"
-                              ? "bg-emerald-100 text-emerald-800"
+                              ? "bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
                               : q.status === "NEED_FOLLOWUP"
-                              ? "bg-rose-100 text-rose-800"
-                              : "bg-amber-100 text-amber-800"
+                              ? "bg-rose-100 text-rose-800 hover:bg-rose-200"
+                              : "bg-amber-100 text-amber-800 hover:bg-amber-200"
                           )}
                         >
-                          {q.status.replace("_", " ")}
-                        </span>
+                          <option value="PENDING">Pending</option>
+                          <option value="ASKED">Asked</option>
+                          <option value="ANSWERED">Answered</option>
+                          <option value="NEED_FOLLOWUP">Need Follow-up</option>
+                        </select>
+
+                        {/* Edit Button */}
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditModal(q)}
+                          title="Edit question details"
+                          className="p-1.5 rounded text-gray-500 hover:text-blue-600 hover:bg-blue-50 transition"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+
+                        {/* Remove from Agenda button */}
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveFromAgenda(q.id)}
+                          title="Remove from meeting agenda (Keep question in Client Q&A)"
+                          className="p-1.5 rounded text-gray-400 hover:text-amber-700 hover:bg-amber-50 transition"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+
+                        {/* Delete Question (Soft Delete) */}
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteQuestion(q.id)}
+                          title="Delete question permanently (Soft delete)"
+                          className="p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 transition"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -416,6 +749,204 @@ export function MeetingPrepModule({
           })}
         </div>
       )}
+
+      {/* Edit Question Modal */}
+      <Modal
+        isOpen={Boolean(editingQuestion)}
+        onClose={() => setEditingQuestion(null)}
+        title="Edit Meeting Agenda Question"
+        description="Update question details, category, priority, and meeting agenda status."
+        maxWidth="lg"
+      >
+        <form onSubmit={handleSaveEdit} className="space-y-4">
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-bold uppercase tracking-wider text-gray-700">
+                Question *
+              </label>
+              <div className="flex items-center gap-1.5">
+                <VoiceMicButton
+                  onTranscript={(transcript) => {
+                    setEditTitle((prev) => (prev ? `${prev} ${transcript}` : transcript));
+                  }}
+                  variant="ghost"
+                  size="sm"
+                  label="Speak"
+                />
+                <AIMagicButton
+                  getText={() => editTitle}
+                  onResult={(res) => setEditTitle(res)}
+                  context="Meeting agenda question"
+                  variant="ghost"
+                  size="sm"
+                  allowedActions={["hinglish_to_english", "professional", "make_short", "grammar", "english_to_simple"]}
+                />
+              </div>
+            </div>
+            <Input
+              placeholder="e.g., Payment gateway kaunsa use karna hai?"
+              value={editTitle}
+              onChange={(e) => setEditTitle(e.target.value)}
+              required
+            />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-bold uppercase tracking-wider text-gray-700">
+                Additional Details / Context
+              </label>
+              <div className="flex items-center gap-1.5">
+                <VoiceMicButton
+                  onTranscript={(transcript) => {
+                    setEditDetails((prev) => (prev ? `${prev} ${transcript}` : transcript));
+                  }}
+                  variant="ghost"
+                  size="sm"
+                  label="Dictate"
+                />
+                <AIMagicButton
+                  getText={() => editDetails}
+                  onResult={(res) => setEditDetails(res)}
+                  context={`Question context for: ${editTitle}`}
+                  variant="ghost"
+                  size="sm"
+                />
+              </div>
+            </div>
+            <Textarea
+              placeholder="Context or decision notes..."
+              value={editDetails}
+              onChange={(e) => setEditDetails(e.target.value)}
+              rows={3}
+            />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-1.5">
+                Category
+              </label>
+              <select
+                value={editCategory}
+                onChange={(e) => setEditCategory(e.target.value)}
+                className="w-full h-11 px-3 rounded-md bg-[#F3F4F6] text-xs font-bold text-gray-800 outline-none border-2 border-transparent focus:bg-white focus:border-[#3B82F6]"
+              >
+                {allCategoryNames.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+                <option value="__CUSTOM__">+ Add Custom Category...</option>
+              </select>
+              {editCategory === "__CUSTOM__" && (
+                <input
+                  type="text"
+                  placeholder="Enter custom category name..."
+                  value={editCustomCatInput}
+                  onChange={(e) => setEditCustomCatInput(e.target.value)}
+                  className="w-full h-10 px-3 mt-2 rounded-md bg-white border-2 border-blue-400 text-xs font-bold text-gray-900 outline-none"
+                  autoFocus
+                />
+              )}
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-1.5">
+                Priority
+              </label>
+              <select
+                value={editPriority}
+                onChange={(e) => setEditPriority(e.target.value)}
+                className="w-full h-11 px-3 rounded-md bg-[#F3F4F6] text-xs font-bold text-gray-800 outline-none border-2 border-transparent focus:bg-white focus:border-[#3B82F6]"
+              >
+                <option value="LOW">Low</option>
+                <option value="MEDIUM">Medium</option>
+                <option value="HIGH">High</option>
+                <option value="URGENT">Urgent</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-1.5">
+                Status
+              </label>
+              <select
+                value={editStatus}
+                onChange={(e) => setEditStatus(e.target.value)}
+                className="w-full h-11 px-3 rounded-md bg-[#F3F4F6] text-xs font-bold text-gray-800 outline-none border-2 border-transparent focus:bg-white focus:border-[#3B82F6]"
+              >
+                <option value="PENDING">Pending</option>
+                <option value="ASKED">Asked</option>
+                <option value="ANSWERED">Answered</option>
+                <option value="NEED_FOLLOWUP">Need Follow-up</option>
+              </select>
+            </div>
+          </div>
+
+          <label className="flex items-center gap-2.5 p-3 rounded-md bg-[#EFF6FF] cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={editForNextMeeting}
+              onChange={(e) => setEditForNextMeeting(e.target.checked)}
+              className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500"
+            />
+            <div>
+              <span className="text-xs font-bold text-gray-900 block">
+                Include in Next Meeting Agenda
+              </span>
+              <span className="text-[11px] text-gray-500">
+                Flag this question to discuss in the upcoming client meeting.
+              </span>
+            </div>
+          </label>
+
+          <div className="flex items-center justify-between pt-4 border-t-2 border-gray-100">
+            <Button
+              type="button"
+              variant="danger"
+              size="sm"
+              onClick={() => {
+                if (!editingQuestion) return;
+                const qId = editingQuestion.id;
+                setEditingQuestion(null);
+                handleDeleteQuestion(qId);
+              }}
+              className="gap-1.5 text-xs"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete Question</span>
+            </Button>
+
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="md"
+                onClick={() => setEditingQuestion(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                variant="primary"
+                size="md"
+                disabled={isSavingEdit || !editTitle.trim()}
+                className="gap-2"
+              >
+                {isSavingEdit ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Saving...</span>
+                  </>
+                ) : (
+                  <span>Save Changes</span>
+                )}
+              </Button>
+            </div>
+          </div>
+        </form>
+      </Modal>
 
       {/* Template Importer Modal */}
       <Modal
@@ -474,6 +1005,96 @@ export function MeetingPrepModule({
             >
               <Layers className="w-4 h-4" />
               <span>{isImporting ? "Importing..." : "Import Template Questions"}</span>
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Pick Existing Questions into Agenda Modal */}
+      <Modal
+        isOpen={isPickModalOpen}
+        onClose={() => setIsPickModalOpen(false)}
+        title="Manage Agenda Questions"
+        description="Select which questions from this project should be discussed in the upcoming meeting."
+        maxWidth="2xl"
+      >
+        <div className="space-y-4">
+          <div className="max-h-[60vh] overflow-y-auto space-y-2 pr-1">
+            {questions.filter((q) => q.status !== "DELETED").length === 0 ? (
+              <div className="p-8 text-center text-gray-500 text-xs font-medium">
+                No questions exist in this project yet. Add questions via the quick bar or Client Q&A tab.
+              </div>
+            ) : (
+              questions
+                .filter((q) => q.status !== "DELETED")
+                .map((q) => {
+                  const isInAgenda = Boolean(q.forNextMeeting);
+                  return (
+                    <div
+                      key={q.id}
+                      className={cn(
+                        "p-3 rounded-lg border-2 flex items-start justify-between gap-3 transition",
+                        isInAgenda
+                          ? "bg-emerald-50 border-emerald-300"
+                          : "bg-white border-gray-200 hover:border-gray-300"
+                      )}
+                    >
+                      <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                        <input
+                          type="checkbox"
+                          checked={isInAgenda}
+                          onChange={() => handleToggleNextMeetingFlag(q.id, isInAgenda)}
+                          className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 mt-1 cursor-pointer"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[10px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-gray-200 text-gray-700">
+                              {q.category}
+                            </span>
+                            <span className="text-[10px] font-bold uppercase text-gray-500">
+                              [{q.status.replace("_", " ")}]
+                            </span>
+                          </div>
+                          <p className="text-xs font-bold text-gray-900 mt-0.5 leading-snug">
+                            {q.title}
+                          </p>
+                        </div>
+                      </div>
+
+                      <Button
+                        variant={isInAgenda ? "danger" : "outline"}
+                        size="sm"
+                        onClick={() => handleToggleNextMeetingFlag(q.id, isInAgenda)}
+                        className="text-[11px] h-7 px-2 shrink-0 gap-1"
+                      >
+                        {isInAgenda ? (
+                          <>
+                            <X className="w-3 h-3" />
+                            <span>Remove</span>
+                          </>
+                        ) : (
+                          <>
+                            <Plus className="w-3 h-3" />
+                            <span>Add</span>
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  );
+                })
+            )}
+          </div>
+
+          <div className="flex items-center justify-between pt-4 border-t-2 border-gray-100">
+            <span className="text-xs font-bold text-gray-600">
+              {nextMeetingQuestions.length} questions currently on agenda
+            </span>
+            <Button
+              variant="primary"
+              size="md"
+              onClick={() => setIsPickModalOpen(false)}
+            >
+              Done
             </Button>
           </div>
         </div>

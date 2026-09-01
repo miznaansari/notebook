@@ -36,6 +36,9 @@ export async function GET(req: NextRequest) {
           },
         },
         questions: {
+          where: {
+            status: { not: "DELETED" },
+          },
           select: {
             status: true,
             forNextMeeting: true,
