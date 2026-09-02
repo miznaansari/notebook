@@ -55,6 +55,48 @@ export async function POST(
     if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
 
     const body = await req.json();
+
+    // Bulk creation support: { tasks: [...] }
+    if (Array.isArray(body.tasks) && body.tasks.length > 0) {
+      const validTasks = body.tasks
+        .filter((t: any) => t && t.title && t.title.trim())
+        .map((t: any) => ({
+          title: t.title.trim(),
+          description: t.description?.trim() || null,
+          priority: t.priority || "MEDIUM",
+          dueDate: t.dueDate ? new Date(t.dueDate) : null,
+          meetingId: t.meetingId || null,
+          status: t.status || "PENDING",
+          projectId,
+        }));
+
+      if (validTasks.length === 0) {
+        return NextResponse.json({ error: "No valid tasks provided." }, { status: 400 });
+      }
+
+      // Create each task and include meeting info
+      const createdTasks = await Promise.all(
+        validTasks.map((t: any) =>
+          db.followUpTask.create({
+            data: t,
+            include: {
+              meeting: {
+                select: { id: true, title: true, meetingDate: true },
+              },
+            },
+          })
+        )
+      );
+
+      await db.project.update({
+        where: { id: projectId },
+        data: { updatedAt: new Date() },
+      });
+
+      return NextResponse.json({ tasks: createdTasks, count: createdTasks.length }, { status: 201 });
+    }
+
+    // Single task creation
     const { title, description, priority, dueDate, meetingId, status } = body;
 
     if (!title || !title.trim()) {
@@ -73,7 +115,7 @@ export async function POST(
       },
       include: {
         meeting: {
-          select: { id: true, title: true },
+          select: { id: true, title: true, meetingDate: true },
         },
       },
     });
@@ -85,6 +127,6 @@ export async function POST(
 
     return NextResponse.json({ task }, { status: 201 });
   } catch (error) {
-    return NextResponse.json({ error: "Failed to create task" }, { status: 500 });
+    return NextResponse.json({ error: "Failed to create task(s)" }, { status: 500 });
   }
 }

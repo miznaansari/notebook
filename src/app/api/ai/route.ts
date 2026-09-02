@@ -61,9 +61,32 @@ export async function POST(req: NextRequest) {
         systemInstruction = "You are a lead software business analyst. Return valid JSON only without markdown formatting.";
         break;
 
+      case "generate_tasks":
       case "extract_tasks":
-        prompt = `Extract all actionable follow-up tasks and commitments from the following meeting minutes / notes:\n\n${text}\n\nReturn in clean JSON format with an array of objects: [{"title": "...", "priority": "HIGH" | "MEDIUM" | "LOW", "description": "..."}]`;
-        systemInstruction = "You are a project coordinator. Extract clear, discrete action items. Return valid JSON only without markdown code blocks.";
+        prompt = `Analyze the following raw notes, bug reports, feature requests, or action items:
+
+"""
+${text}
+"""
+
+Context/Project: "${context || ""}"
+
+Instructions:
+1. Parse every distinct issue, bug, question, inquiry, or follow-up item into an actionable project task.
+2. For each task, provide:
+   - "title": A concise, clear, professional, and actionable task title (e.g., "Fix Bulk Account Import Failure", "Resolve Skip Onboarding Issue", "Verify Email Validation System Status", "Implement Invitation Email for Unregistered Users", "Fix Admin-to-Admin Invite Error").
+   - "description": Contextual explanation, root cause / expected behavior, or deliverable details extracted from the text.
+   - "priority": Auto-classify as "URGENT", "HIGH", "MEDIUM", or "LOW" based on urgency and severity (e.g. broken features, crash/errors, or blockers = HIGH/URGENT; questions/verifications = MEDIUM/LOW).
+3. Return ONLY a valid JSON array of objects with the exact structure:
+[
+  {
+    "title": "Task title here",
+    "description": "Task description or details here",
+    "priority": "HIGH"
+  }
+]
+Do not include markdown explanation, code fences, or any other text outside the JSON array.`;
+        systemInstruction = "You are an expert technical lead and project manager. Parse raw user inputs, bug lists, and notes into clean, actionable, structured task items. Always respond with pure valid JSON array only.";
         break;
 
       default:
@@ -73,12 +96,18 @@ export async function POST(req: NextRequest) {
     const { text: result, modelUsed } = await generateWithGemini(prompt, systemInstruction);
 
     // If json requested, attempt to parse
-    if (action === "generate_questions" || action === "extract_tasks") {
+    if (action === "generate_questions" || action === "extract_tasks" || action === "generate_tasks") {
       try {
-        const cleanedJson = result.replace(/```json/g, "").replace(/```/g, "").trim();
+        let cleanedJson = result.trim();
+        cleanedJson = cleanedJson.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+        const arrayMatch = cleanedJson.match(/\[[\s\S]*\]/);
+        if (arrayMatch) {
+          cleanedJson = arrayMatch[0];
+        }
         const parsed = JSON.parse(cleanedJson);
         return NextResponse.json({ result: parsed, modelUsed, raw: result });
       } catch (parseErr) {
+        console.error("AI JSON parse error:", parseErr, "Raw output:", result);
         return NextResponse.json({ result, modelUsed });
       }
     }

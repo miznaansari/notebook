@@ -55,6 +55,11 @@ export async function GET(
           },
         },
         tasks: {
+          include: {
+            meeting: {
+              select: { id: true, title: true, meetingDate: true },
+            },
+          },
           orderBy: [
             { status: "asc" },
             { dueDate: "asc" },
