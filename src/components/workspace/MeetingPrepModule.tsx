@@ -650,8 +650,11 @@ export function MeetingPrepModule({
           />
           <div className="absolute right-2 flex items-center gap-1">
             <VoiceMicButton
+              onInterimTranscript={(interim) => {
+                setQuickQuestionText(interim);
+              }}
               onTranscript={(transcript) => {
-                setQuickQuestionText((prev) => (prev ? `${prev} ${transcript}` : transcript));
+                setQuickQuestionText(transcript);
               }}
               variant="ghost"
               size="sm"
@@ -1034,8 +1037,11 @@ export function MeetingPrepModule({
               </label>
               <div className="flex items-center gap-1.5">
                 <VoiceMicButton
+                  onInterimTranscript={(interim) => {
+                    setEditTitle(interim);
+                  }}
                   onTranscript={(transcript) => {
-                    setEditTitle((prev) => (prev ? `${prev} ${transcript}` : transcript));
+                    setEditTitle(transcript);
                   }}
                   variant="ghost"
                   size="sm"
@@ -1066,8 +1072,11 @@ export function MeetingPrepModule({
               </label>
               <div className="flex items-center gap-1.5">
                 <VoiceMicButton
+                  onInterimTranscript={(interim) => {
+                    setEditDetails(interim);
+                  }}
                   onTranscript={(transcript) => {
-                    setEditDetails((prev) => (prev ? `${prev} ${transcript}` : transcript));
+                    setEditDetails(transcript);
                   }}
                   variant="ghost"
                   size="sm"

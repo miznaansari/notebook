@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
+import { SarvamLiveSocketStreamer } from "@/lib/sarvam-client-stream";
+
 export interface VoiceMicButtonProps {
   onTranscript: (finalText: string) => void;
   onInterimTranscript?: (interimText: string) => void;
@@ -34,11 +36,13 @@ export function VoiceMicButton({
   const [isMenuOpen, setIsMenuOpen] = React.useState(false);
   const [liveInterimSnippet, setLiveInterimSnippet] = React.useState("");
 
+  const streamerRef = React.useRef<SarvamLiveSocketStreamer | null>(null);
   const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
   const audioChunksRef = React.useRef<Blob[]>([]);
   const timerRef = React.useRef<NodeJS.Timeout | null>(null);
   const dropdownRef = React.useRef<HTMLDivElement>(null);
   const speechRecognitionRef = React.useRef<any>(null);
+  const isWsStreamingRef = React.useRef(false);
 
   // Close dropdown on click outside
   React.useEffect(() => {
@@ -51,6 +55,16 @@ export function VoiceMicButton({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  // Cleanup on unmount
+  React.useEffect(() => {
+    return () => {
+      if (streamerRef.current) {
+        streamerRef.current.cleanup();
+      }
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, []);
+
   const startRecording = async () => {
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -58,26 +72,44 @@ export function VoiceMicButton({
         return;
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
+      setIsRecording(true);
+      setRecordingSeconds(0);
+      setLiveInterimSnippet("");
+      isWsStreamingRef.current = false;
 
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
+      // Start timer
+      timerRef.current = setInterval(() => {
+        setRecordingSeconds((prev) => prev + 1);
+      }, 1000);
 
-      mediaRecorder.onstop = async () => {
-        stream.getTracks().forEach((track) => track.stop());
+      toast.info("⚡ Live Real-time WebSocket Connected... Speak now!");
 
-        if (audioChunksRef.current.length === 0) return;
-        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
-        await handleSendToSarvam(audioBlob);
-      };
+      // 1. Direct Sarvam AI WebSocket Streaming
+      const streamer = new SarvamLiveSocketStreamer();
+      streamerRef.current = streamer;
 
-      // Real-time Live Speech Recognition
+      await streamer.start({
+        mode,
+        languageCode: mode === "transcribe" ? "hi-IN" : "hi-IN",
+        onPartial: (text) => {
+          isWsStreamingRef.current = true;
+          if (text.trim()) {
+            setLiveInterimSnippet(text.trim());
+            onInterimTranscript?.(text.trim());
+          }
+        },
+        onFinal: (text) => {
+          if (text.trim()) {
+            setLiveInterimSnippet(text.trim());
+            onInterimTranscript?.(text.trim());
+          }
+        },
+        onError: (err) => {
+          console.warn("Direct Sarvam WS error, fallback active:", err);
+        },
+      });
+
+      // 2. Parallel backup WebSpeech for instant zero-latency visual feedback
       const SpeechRecognition =
         (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
@@ -90,97 +122,61 @@ export function VoiceMicButton({
 
           recognizer.onresult = (event: any) => {
             let liveString = "";
-            for (let i = event.resultIndex; i < event.results.length; ++i) {
-              liveString += event.results[i][0].transcript;
+            for (let i = 0; i < event.results.length; ++i) {
+              liveString += event.results[i][0].transcript + " ";
             }
-            if (liveString.trim()) {
+            if (liveString.trim() && !isWsStreamingRef.current) {
               setLiveInterimSnippet(liveString.trim());
-              if (onInterimTranscript) {
-                onInterimTranscript(liveString.trim());
-              }
+              onInterimTranscript?.(liveString.trim());
             }
-          };
-
-          recognizer.onerror = (e: any) => {
-            console.warn("Live speech recognition event:", e?.error);
           };
 
           recognizer.start();
           speechRecognitionRef.current = recognizer;
-        } catch (recognitionErr) {
-          console.warn("Live WebSpeech recognizer error:", recognitionErr);
-        }
+        } catch (_) { }
       }
-
-      mediaRecorder.start(250);
-      setIsRecording(true);
-      setRecordingSeconds(0);
-      setLiveInterimSnippet("");
-
-      toast.info("🎙️ Real-time Live Listening... Speak now!");
-
-      timerRef.current = setInterval(() => {
-        setRecordingSeconds((prev) => prev + 1);
-      }, 1000);
     } catch (err: any) {
       console.error("Microphone error:", err);
       toast.error("Microphone access was denied or is unavailable.");
+      setIsRecording(false);
+      if (timerRef.current) clearInterval(timerRef.current);
     }
   };
 
-  const stopRecording = () => {
+  const stopRecording = async () => {
     if (timerRef.current) clearInterval(timerRef.current);
     setIsRecording(false);
+    setIsProcessing(true);
 
     if (speechRecognitionRef.current) {
       try {
         speechRecognitionRef.current.stop();
-      } catch (e) {}
+      } catch (_) { }
     }
-
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      mediaRecorderRef.current.stop();
-    }
-  };
-
-  const handleSendToSarvam = async (blob: Blob) => {
-    setIsProcessing(true);
-    const modeLabel =
-      mode === "translate"
-        ? "Translating speech to English..."
-        : mode === "transcribe"
-        ? "Finalizing Hindi..."
-        : "Finalizing Hinglish with Sarvam AI...";
-
-    toast.info(`⏳ ${modeLabel}`);
 
     try {
-      const formData = new FormData();
-      formData.append("file", blob, "voice_input.webm");
-      formData.append("mode", mode);
+      let finalTranscript = "";
 
-      const res = await fetch("/api/stt", {
-        method: "POST",
-        body: formData,
-      });
+      // Stop Sarvam WebSocket streamer & get final transcript
+      if (streamerRef.current) {
+        finalTranscript = await streamerRef.current.stop();
+        streamerRef.current = null;
+      }
 
-      const data = await res.json();
+      const textToCommit = (finalTranscript || liveInterimSnippet).trim();
 
-      if (res.ok && data.transcript && data.transcript.trim()) {
-        onTranscript(data.transcript.trim());
-        toast.success("✅ Voice transcribed into Hinglish!");
-      } else if (liveInterimSnippet) {
-        onTranscript(liveInterimSnippet);
-        toast.success("✅ Voice captured from live speech!");
+      if (textToCommit) {
+        onTranscript(textToCommit);
+        toast.success("✅ Voice transcribed in real-time!");
       } else {
-        toast.error(data.error || "No speech detected in audio.");
+        toast.info("No speech detected.");
       }
     } catch (err: any) {
       if (liveInterimSnippet) {
         onTranscript(liveInterimSnippet);
         toast.success("✅ Voice captured!");
       } else {
-        toast.error("Failed to connect to Sarvam AI STT service.");
+        toast.error("Failed to finalize speech transcription.");
       }
     } finally {
       setIsProcessing(false);
@@ -200,8 +196,8 @@ export function VoiceMicButton({
         <button
           type="button"
           onClick={stopRecording}
-          className="h-8 px-2 sm:px-3 rounded-lg bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white text-xs font-bold flex items-center gap-1.5 sm:gap-2 shadow-sm shadow-red-500/30 animate-pulse cursor-pointer select-none transition-all shrink-0"
-          title="Click to stop and finalize with Sarvam AI"
+          className="h-8 px-2.5 sm:px-3 rounded-lg bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white text-xs font-bold flex items-center gap-1.5 sm:gap-2 shadow-sm shadow-red-500/30 animate-pulse cursor-pointer select-none transition-all shrink-0"
+          title="Click to insert live transcript"
         >
           <span className="relative flex h-2 w-2 shrink-0">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
@@ -209,7 +205,7 @@ export function VoiceMicButton({
           </span>
           <span className="hidden sm:inline">Live ({formatTimer(recordingSeconds)})</span>
           <span className="sm:hidden text-[11px]">{formatTimer(recordingSeconds)}</span>
-          <span className="text-[10px] bg-white/20 px-1 py-0.2 rounded uppercase font-semibold">Stop</span>
+          <span className="text-[10px] bg-white/20 px-1 py-0.2 rounded uppercase font-semibold">Done</span>
         </button>
       ) : isProcessing ? (
         <button
@@ -230,7 +226,7 @@ export function VoiceMicButton({
               "h-8 px-2 sm:px-2.5 text-xs font-semibold text-rose-700 flex items-center gap-1.5 cursor-pointer transition-colors select-none",
               className
             )}
-            title="Real-Time Voice Dictation (Speak Hindi -> Generates Hinglish in real-time)"
+            title="Real-Time Voice Dictation (Speak Hindi -> Live Hinglish in real-time)"
           >
             <Mic className="w-3.5 h-3.5 text-rose-600 shrink-0" strokeWidth={2.2} />
             {label && <span className="hidden sm:inline">{label}</span>}
@@ -249,7 +245,10 @@ export function VoiceMicButton({
         </div>
       )}
 
-      {/* Mode Selector Dropdown (Light, Modern Card) */}
+      {/* Floating Real-Time Speech Display HUD when User is speaking */}
+
+
+      {/* Mode Selector Dropdown */}
       {isMenuOpen && (
         <div className="absolute right-0 top-full mt-1.5 z-50 w-72 bg-white text-gray-900 rounded-xl border border-gray-200 p-1.5 shadow-xl animate-in fade-in zoom-in-95 select-none">
           <div className="px-2.5 py-1.5 border-b border-gray-100 text-[10px] font-extrabold uppercase tracking-wider text-rose-600 flex items-center justify-between">

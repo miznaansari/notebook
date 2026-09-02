@@ -77,6 +77,7 @@ export function MeetingsModule({
   const [status, setStatus] = React.useState<"SCHEDULED" | "COMPLETED" | "CANCELLED">("SCHEDULED");
   const [selectedQuestionIds, setSelectedQuestionIds] = React.useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const voiceBaseNotesRef = React.useRef<{ [meetingId: string]: string }>({});
 
   // Sync preSelectedQuestionIds
   React.useEffect(() => {
@@ -386,15 +387,26 @@ export function MeetingsModule({
                     {/* Gemini AI & Sarvam STT Actions for Minutes */}
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <VoiceMicButton
+                        onInterimTranscript={(interim) => {
+                          if (voiceBaseNotesRef.current[meeting.id] === undefined) {
+                            voiceBaseNotesRef.current[meeting.id] = meeting.notes || "";
+                          }
+                          const base = voiceBaseNotesRef.current[meeting.id];
+                          const separator = base && !base.endsWith("\n") && !base.endsWith(" ") ? "\n" : "";
+                          handleUpdateNotes(meeting.id, base + separator + interim);
+                        }}
                         onTranscript={(transcript) => {
-                          const currentNotes = meeting.notes || "";
-                          const separator = currentNotes && !currentNotes.endsWith("\n") ? "\n" : "";
-                          const updated = currentNotes + separator + transcript;
+                          const base = voiceBaseNotesRef.current[meeting.id] !== undefined
+                            ? voiceBaseNotesRef.current[meeting.id]
+                            : (meeting.notes || "");
+                          delete voiceBaseNotesRef.current[meeting.id];
+                          const separator = base && !base.endsWith("\n") && !base.endsWith(" ") ? "\n" : "";
+                          const updated = base + separator + transcript;
                           handleUpdateNotes(meeting.id, updated);
                         }}
                         variant="ghost"
                         size="sm"
-                        label="Dictate Minutes"
+                        label="Dictate Minutes (Live)"
                       />
 
                       <Button

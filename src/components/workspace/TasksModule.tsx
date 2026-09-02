@@ -81,6 +81,8 @@ export function TasksModule({
   const [quickPriority, setQuickPriority] = React.useState<"LOW" | "MEDIUM" | "HIGH" | "URGENT">("HIGH");
   const [quickDueDate, setQuickDueDate] = React.useState("");
   const [quickMeetingId, setQuickMeetingId] = React.useState("");
+  const voiceBaseQuickTitleRef = React.useRef<string | null>(null);
+  const voiceBaseAiRawRef = React.useRef<string | null>(null);
 
   // Manual Add Modal State
   const [isAddModalOpen, setIsAddModalOpen] = React.useState(false);
@@ -777,8 +779,19 @@ Schedule follow-up sprint demo for next Tuesday 4 PM.`,
           />
           <div className="absolute right-2 flex items-center gap-1">
             <VoiceMicButton
+              onInterimTranscript={(interim) => {
+                if (voiceBaseQuickTitleRef.current === null) {
+                  voiceBaseQuickTitleRef.current = quickTitle;
+                }
+                const base = voiceBaseQuickTitleRef.current;
+                const sep = base && !base.endsWith(" ") ? " " : "";
+                setQuickTitle(base + sep + interim);
+              }}
               onTranscript={(transcript) => {
-                setQuickTitle((prev) => (prev ? `${prev} ${transcript}` : transcript));
+                const base = voiceBaseQuickTitleRef.current !== null ? voiceBaseQuickTitleRef.current : quickTitle;
+                voiceBaseQuickTitleRef.current = null;
+                const sep = base && !base.endsWith(" ") ? " " : "";
+                setQuickTitle(base + sep + transcript);
               }}
               variant="ghost"
               size="sm"
@@ -974,8 +987,19 @@ Schedule follow-up sprint demo for next Tuesday 4 PM.`,
                     <span>Paste Raw Text / Bug List / Meeting Notes *</span>
                   </label>
                   <VoiceMicButton
+                    onInterimTranscript={(interim) => {
+                      if (voiceBaseAiRawRef.current === null) {
+                        voiceBaseAiRawRef.current = aiRawText;
+                      }
+                      const base = voiceBaseAiRawRef.current;
+                      const sep = base && !base.endsWith("\n") && !base.endsWith(" ") ? "\n" : "";
+                      setAiRawText(base + sep + interim);
+                    }}
                     onTranscript={(transcript) => {
-                      setAiRawText((prev) => (prev ? `${prev}\n${transcript}` : transcript));
+                      const base = voiceBaseAiRawRef.current !== null ? voiceBaseAiRawRef.current : aiRawText;
+                      voiceBaseAiRawRef.current = null;
+                      const sep = base && !base.endsWith("\n") && !base.endsWith(" ") ? "\n" : "";
+                      setAiRawText(base + sep + transcript);
                     }}
                     variant="secondary"
                     size="sm"

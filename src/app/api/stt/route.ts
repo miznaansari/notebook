@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthUserFromRequest } from "@/lib/auth";
 import { transcribeAudioWithSarvam, SarvamSttMode } from "@/lib/sarvam";
 import { generateWithGemini } from "@/lib/gemini";
+import { toHinglish } from "@/lib/hinglish-transliterator";
 
 // Helper function to check if text contains Devanagari Hindi characters
 function containsDevanagari(text: string): boolean {
@@ -60,7 +61,11 @@ export async function POST(req: NextRequest) {
     // If output is in Devanagari Hindi script and mode is not translate, convert directly to Hinglish
     if (containsDevanagari(finalTranscript) && mode !== "translate") {
       try {
-        finalTranscript = await convertDevanagariToHinglish(finalTranscript);
+        finalTranscript = toHinglish(finalTranscript);
+        // If any residual Devanagari remains, refine with Gemini
+        if (containsDevanagari(finalTranscript)) {
+          finalTranscript = await convertDevanagariToHinglish(finalTranscript);
+        }
       } catch (translitErr) {
         console.warn("Devanagari to Hinglish transliteration warning:", translitErr);
       }

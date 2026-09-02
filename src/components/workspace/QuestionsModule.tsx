@@ -953,10 +953,16 @@ export function QuestionsModule({
                                 />
                                 <div className="absolute right-1">
                                   <VoiceMicButton
+                                    onInterimTranscript={(interim) => {
+                                      setNewAnswerText((prev) => ({
+                                        ...prev,
+                                        [q.id]: interim,
+                                      }));
+                                    }}
                                     onTranscript={(transcript) => {
                                       setNewAnswerText((prev) => ({
                                         ...prev,
-                                        [q.id]: prev[q.id] ? `${prev[q.id]} ${transcript}` : transcript,
+                                        [q.id]: transcript,
                                       }));
                                     }}
                                     variant="ghost"
@@ -1032,8 +1038,11 @@ export function QuestionsModule({
                             </label>
                             <div className="flex items-center gap-1">
                               <VoiceMicButton
+                                onInterimTranscript={(interim) => {
+                                  setInlineTitle(interim);
+                                }}
                                 onTranscript={(transcript) => {
-                                  setInlineTitle((prev) => (prev ? `${prev} ${transcript}` : transcript));
+                                  setInlineTitle(transcript);
                                 }}
                                 variant="ghost"
                                 size="sm"
@@ -1065,8 +1074,11 @@ export function QuestionsModule({
                               Context / Details (Optional)
                             </label>
                             <VoiceMicButton
+                              onInterimTranscript={(interim) => {
+                                setInlineDetails(interim);
+                              }}
                               onTranscript={(transcript) => {
-                                setInlineDetails((prev) => (prev ? `${prev} ${transcript}` : transcript));
+                                setInlineDetails(transcript);
                               }}
                               variant="ghost"
                               size="sm"
@@ -1197,8 +1209,11 @@ export function QuestionsModule({
               </label>
               <div className="flex items-center gap-1.5">
                 <VoiceMicButton
+                  onInterimTranscript={(interim) => {
+                    setNewTitle(interim);
+                  }}
                   onTranscript={(transcript) => {
-                    setNewTitle((prev) => (prev ? `${prev} ${transcript}` : transcript));
+                    setNewTitle(transcript);
                   }}
                   variant="ghost"
                   size="sm"
@@ -1229,8 +1244,11 @@ export function QuestionsModule({
               </label>
               <div className="flex items-center gap-1.5">
                 <VoiceMicButton
+                  onInterimTranscript={(interim) => {
+                    setNewDetails(interim);
+                  }}
                   onTranscript={(transcript) => {
-                    setNewDetails((prev) => (prev ? `${prev} ${transcript}` : transcript));
+                    setNewDetails(transcript);
                   }}
                   variant="ghost"
                   size="sm"
@@ -1369,8 +1387,11 @@ export function QuestionsModule({
               </label>
               <div className="flex items-center gap-1.5">
                 <VoiceMicButton
+                  onInterimTranscript={(interim) => {
+                    setEditTitle(interim);
+                  }}
                   onTranscript={(transcript) => {
-                    setEditTitle((prev) => (prev ? `${prev} ${transcript}` : transcript));
+                    setEditTitle(transcript);
                   }}
                   variant="ghost"
                   size="sm"
@@ -1401,8 +1422,11 @@ export function QuestionsModule({
               </label>
               <div className="flex items-center gap-1.5">
                 <VoiceMicButton
+                  onInterimTranscript={(interim) => {
+                    setEditDetails(interim);
+                  }}
                   onTranscript={(transcript) => {
-                    setEditDetails((prev) => (prev ? `${prev} ${transcript}` : transcript));
+                    setEditDetails(transcript);
                   }}
                   variant="ghost"
                   size="sm"

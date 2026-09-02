@@ -134,6 +134,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
   const latestPinnedRef = React.useRef(false);
   const latestActiveIdRef = React.useRef<string | null>(null);
   const lastLoadedNoteIdRef = React.useRef<string | null>(null);
+  const voiceBaseContentRef = React.useRef<string | null>(null);
 
   // Push snapshot into history stack (max 50 snapshots)
   const pushHistorySnapshot = React.useCallback((newContent: string) => {
@@ -1491,43 +1492,37 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
                   )}
                 </span>
 
-                {/* Live Voice STT Dictation */}
+                {/* Live Voice STT Dictation directly into Notepad */}
                 <VoiceMicButton
-                  onTranscript={(transcript) => {
+                  onInterimTranscript={(interimText) => {
+                    if (voiceBaseContentRef.current === null) {
+                      voiceBaseContentRef.current = currentContent;
+                    }
+                    const base = voiceBaseContentRef.current;
+                    const separator = base && !base.endsWith("\n") && !base.endsWith(" ") ? " " : "";
+                    const liveContent = base + separator + interimText;
+                    setCurrentContent(liveContent);
+                    latestContentRef.current = liveContent;
+                  }}
+                  onTranscript={(finalTranscript) => {
                     if (typingTimerRef.current) {
                       clearTimeout(typingTimerRef.current);
                       typingTimerRef.current = null;
                     }
-                    const textarea = textareaRef.current;
-                    let newContent = "";
-                    let newPos = 0;
-                    if (textarea) {
-                      const start = textarea.selectionStart;
-                      const end = textarea.selectionEnd;
-                      const before = currentContent.substring(0, start);
-                      const after = currentContent.substring(end);
-                      const separator = before && !before.endsWith("\n") && !before.endsWith(" ") ? " " : "";
-                      newContent = before + separator + transcript + after;
-                      newPos = start + separator.length + transcript.length;
-                    } else {
-                      const separator = currentContent && !currentContent.endsWith("\n") ? "\n\n" : "";
-                      newContent = currentContent + separator + transcript;
-                    }
 
-                    pushHistorySnapshot(currentContent);
+                    const base = voiceBaseContentRef.current !== null ? voiceBaseContentRef.current : currentContent;
+                    voiceBaseContentRef.current = null;
+
+                    const separator = base && !base.endsWith("\n") && !base.endsWith(" ") ? " " : "";
+                    const newContent = base + separator + finalTranscript;
+
+                    pushHistorySnapshot(base);
                     pushHistorySnapshot(newContent);
                     setCurrentContent(newContent);
                     latestContentRef.current = newContent;
                     scheduleAutoSave();
 
-                    if (textarea && newPos > 0) {
-                      setTimeout(() => {
-                        textarea.focus();
-                        textarea.setSelectionRange(newPos, newPos);
-                      }, 50);
-                    }
-
-                    toast.success("Voice transcript inserted", {
+                    toast.success("Voice transcribed directly into note!", {
                       action: {
                         label: "Undo (Ctrl+Z)",
                         onClick: () => handleUndo(),
@@ -1537,7 +1532,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
                   }}
                   variant="rose"
                   size="sm"
-                  label="Voice"
+                  label="Voice (Live)"
                 />
 
                 {/* Gemini AI Assistant */}
