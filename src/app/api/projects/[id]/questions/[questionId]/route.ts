@@ -19,7 +19,7 @@ export async function PUT(
     if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
 
     const body = await req.json();
-    const { title, details, category, status, priority, forNextMeeting, orderIndex } = body;
+    const { title, details, category, status, priority, forNextMeeting, orderIndex, date, createdAt } = body;
 
     const categoryName = category !== undefined ? category.trim() || "General" : undefined;
 
@@ -34,6 +34,8 @@ export async function PUT(
       }
     }
 
+    const questionDate = date ? new Date(date) : createdAt ? new Date(createdAt) : undefined;
+
     const updated = await db.question.update({
       where: { id: questionId },
       data: {
@@ -44,6 +46,7 @@ export async function PUT(
         priority: priority !== undefined ? priority : undefined,
         forNextMeeting: forNextMeeting !== undefined ? Boolean(forNextMeeting) : undefined,
         orderIndex: orderIndex !== undefined ? orderIndex : undefined,
+        createdAt: questionDate,
       },
       include: {
         answers: {

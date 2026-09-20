@@ -13,12 +13,17 @@ import {
   Calendar,
   Layers,
   Archive,
+  ArchiveRestore,
   ChevronRight,
+  ChevronUp,
+  ChevronDown,
+  GripVertical,
   Sparkles,
   BookOpen,
   LogOut,
   User as UserIcon,
   X,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,6 +39,7 @@ export interface ProjectSummary {
   color: string;
   icon: string;
   isArchived: boolean;
+  orderIndex?: number;
   notesCount: number;
   questionsCount: number;
   meetingsCount: number;
@@ -49,6 +55,9 @@ interface SidebarProps {
   selectedProjectId: string | null;
   onSelectProject: (id: string) => void;
   onNewProject: () => void;
+  onArchiveProject?: (id: string, newStatus?: boolean) => void;
+  onReorderProjects?: (updatedProjects: ProjectSummary[]) => void;
+  archivingProjectId?: string | null;
   isOpen: boolean;
   onCloseMobile: () => void;
 }
@@ -59,6 +68,9 @@ export function Sidebar({
   selectedProjectId,
   onSelectProject,
   onNewProject,
+  onArchiveProject,
+  onReorderProjects,
+  archivingProjectId,
   isOpen,
   onCloseMobile,
 }: SidebarProps) {
@@ -66,6 +78,10 @@ export function Sidebar({
   const [searchQuery, setSearchQuery] = React.useState("");
   const [showArchived, setShowArchived] = React.useState(false);
   const [isLoggingOut, setIsLoggingOut] = React.useState(false);
+
+  // Drag and drop reordering state
+  const [draggedProjectId, setDraggedProjectId] = React.useState<string | null>(null);
+  const [dragOverProjectId, setDragOverProjectId] = React.useState<string | null>(null);
 
   const handleLogout = async () => {
     setIsLoggingOut(true);
@@ -79,6 +95,42 @@ export function Sidebar({
     } finally {
       setIsLoggingOut(false);
     }
+  };
+
+  const isReorderingAllowed = !searchQuery;
+
+  const handleReorder = (draggedId: string, targetId: string) => {
+    if (!onReorderProjects || draggedId === targetId) return;
+
+    const list = [...projects];
+    const draggedIdx = list.findIndex((p) => p.id === draggedId);
+    const targetIdx = list.findIndex((p) => p.id === targetId);
+
+    if (draggedIdx === -1 || targetIdx === -1) return;
+
+    const [draggedItem] = list.splice(draggedIdx, 1);
+    list.splice(targetIdx, 0, draggedItem);
+
+    const updatedProjects = list.map((p, idx) => ({
+      ...p,
+      orderIndex: idx,
+    }));
+
+    onReorderProjects(updatedProjects);
+  };
+
+  const handleMoveProject = (id: string, direction: "up" | "down", e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!onReorderProjects) return;
+
+    const currIndex = filteredProjects.findIndex((p) => p.id === id);
+    if (currIndex === -1) return;
+
+    const targetIndex = direction === "up" ? currIndex - 1 : currIndex + 1;
+    if (targetIndex < 0 || targetIndex >= filteredProjects.length) return;
+
+    const targetProject = filteredProjects[targetIndex];
+    handleReorder(id, targetProject.id);
   };
 
   const filteredProjects = projects.filter((p) => {
@@ -173,24 +225,73 @@ export function Sidebar({
               </p>
             </div>
           ) : (
-            filteredProjects.map((project) => {
+            filteredProjects.map((project, projectIndex) => {
               const isSelected = project.id === selectedProjectId;
+              const isBeingDragged = draggedProjectId === project.id;
+              const isDragTarget = dragOverProjectId === project.id;
+              const isFirst = projectIndex === 0;
+              const isLast = projectIndex === filteredProjects.length - 1;
+
               return (
                 <div
                   key={project.id}
+                  draggable={isReorderingAllowed}
+                  onDragStart={(e) => {
+                    if (!isReorderingAllowed) return;
+                    setDraggedProjectId(project.id);
+                    e.dataTransfer.setData("text/plain", project.id);
+                    e.dataTransfer.effectAllowed = "move";
+                  }}
+                  onDragOver={(e) => {
+                    if (!isReorderingAllowed || !draggedProjectId) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
+                    if (dragOverProjectId !== project.id) {
+                      setDragOverProjectId(project.id);
+                    }
+                  }}
+                  onDragLeave={() => {
+                    if (dragOverProjectId === project.id) {
+                      setDragOverProjectId(null);
+                    }
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    if (draggedProjectId && draggedProjectId !== project.id) {
+                      handleReorder(draggedProjectId, project.id);
+                    }
+                    setDraggedProjectId(null);
+                    setDragOverProjectId(null);
+                  }}
+                  onDragEnd={() => {
+                    setDraggedProjectId(null);
+                    setDragOverProjectId(null);
+                  }}
                   onClick={() => {
                     onSelectProject(project.id);
                     onCloseMobile();
                   }}
                   className={cn(
-                    "group relative p-3 rounded-lg cursor-pointer transition-all duration-200 select-none",
+                    "group relative p-3 rounded-lg cursor-pointer transition-all duration-200 select-none border-2",
                     isSelected
-                      ? "bg-white border-l-4 border-l-[#3B82F6] text-gray-900"
-                      : "bg-white/60 hover:bg-white text-gray-700 hover:scale-[1.01]"
+                      ? "bg-white border-l-4 border-l-[#3B82F6] border-t-transparent border-r-transparent border-b-transparent text-gray-900 shadow-xs"
+                      : "bg-white/60 hover:bg-white border-transparent text-gray-700 hover:scale-[1.01]",
+                    isBeingDragged && "opacity-30 scale-[0.98] border-dashed border-blue-400 bg-blue-50/40",
+                    isDragTarget && "border-t-4 border-t-[#3B82F6] bg-blue-50/40 shadow-sm"
                   )}
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      {/* Drag handle */}
+                      {isReorderingAllowed && (
+                        <div
+                          className="text-gray-300 group-hover:text-gray-600 cursor-grab active:cursor-grabbing p-0.5 -ml-1 shrink-0 transition opacity-0 group-hover:opacity-100"
+                          title="Drag to rearrange project order"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <GripVertical className="w-3.5 h-3.5" />
+                        </div>
+                      )}
                       <span
                         className="w-2.5 h-2.5 rounded-full shrink-0"
                         style={{ backgroundColor: project.color || "#3B82F6" }}
@@ -207,12 +308,69 @@ export function Sidebar({
                       </div>
                     </div>
 
-                    <ChevronRight
-                      className={cn(
-                        "w-3.5 h-3.5 shrink-0 transition-transform duration-200",
-                        isSelected ? "text-[#3B82F6] translate-x-0.5" : "text-gray-300 group-hover:text-gray-600"
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      {/* Quick Move Up/Down Buttons */}
+                      {isReorderingAllowed && onReorderProjects && filteredProjects.length > 1 && (
+                        <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity duration-150 mr-0.5">
+                          <button
+                            type="button"
+                            disabled={isFirst}
+                            onClick={(e) => handleMoveProject(project.id, "up", e)}
+                            title="Move project up"
+                            className="p-1 rounded text-gray-400 hover:text-gray-900 hover:bg-gray-100 disabled:opacity-20 disabled:hover:bg-transparent disabled:cursor-not-allowed cursor-pointer transition"
+                          >
+                            <ChevronUp className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isLast}
+                            onClick={(e) => handleMoveProject(project.id, "down", e)}
+                            title="Move project down"
+                            className="p-1 rounded text-gray-400 hover:text-gray-900 hover:bg-gray-100 disabled:opacity-20 disabled:hover:bg-transparent disabled:cursor-not-allowed cursor-pointer transition"
+                          >
+                            <ChevronDown className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       )}
-                    />
+
+                      {onArchiveProject && (
+                        <button
+                          type="button"
+                          disabled={archivingProjectId === project.id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onArchiveProject(project.id, !project.isArchived);
+                          }}
+                          title={
+                            archivingProjectId === project.id
+                              ? (project.isArchived ? "Restoring project..." : "Archiving project...")
+                              : (project.isArchived ? "Restore Project from Archive" : "Archive Project")
+                          }
+                          className={cn(
+                            "p-1 rounded transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed",
+                            archivingProjectId === project.id
+                              ? "opacity-100 text-amber-600"
+                              : project.isArchived
+                                ? "text-amber-600 hover:bg-amber-100 opacity-90 hover:opacity-100"
+                                : "text-gray-400 hover:text-amber-600 hover:bg-gray-200/80 opacity-0 group-hover:opacity-100"
+                          )}
+                        >
+                          {archivingProjectId === project.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-600" />
+                          ) : project.isArchived ? (
+                            <ArchiveRestore className="w-3.5 h-3.5" />
+                          ) : (
+                            <Archive className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      )}
+                      <ChevronRight
+                        className={cn(
+                          "w-3.5 h-3.5 shrink-0 transition-transform duration-200",
+                          isSelected ? "text-[#3B82F6] translate-x-0.5" : "text-gray-300 group-hover:text-gray-600"
+                        )}
+                      />
+                    </div>
                   </div>
 
                   {/* Badges / Counters */}
@@ -250,7 +408,7 @@ export function Sidebar({
           {/* Archived toggle */}
           <button
             onClick={() => setShowArchived(!showArchived)}
-            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-gray-100 text-xs font-bold text-gray-600 transition"
+            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-gray-100 text-xs font-bold text-gray-600 transition cursor-pointer"
           >
             <div className="flex items-center gap-1.5">
               <Archive className="w-3.5 h-3.5 text-gray-400" />

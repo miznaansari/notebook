@@ -48,7 +48,9 @@ export default function WorkspacePage() {
   const [clientName, setClientName] = React.useState("");
   const [projectDesc, setProjectDesc] = React.useState("");
   const [projectColor, setProjectColor] = React.useState("#3B82F6");
+  const [projectIsArchived, setProjectIsArchived] = React.useState(false);
   const [isSubmittingProject, setIsSubmittingProject] = React.useState(false);
+  const [archivingProjectId, setArchivingProjectId] = React.useState<string | null>(null);
 
   // Question IDs passed from Meeting Prep to Meetings module
   const [preSelectedMeetingQuestions, setPreSelectedMeetingQuestions] = React.useState<string[]>([]);
@@ -95,6 +97,7 @@ export default function WorkspacePage() {
         setClientName(data.project.clientName || "");
         setProjectDesc(data.project.description || "");
         setProjectColor(data.project.color || "#3B82F6");
+        setProjectIsArchived(data.project.isArchived || false);
       } else {
         toast.error("Project not found");
       }
@@ -147,6 +150,7 @@ export default function WorkspacePage() {
         setProjectName("");
         setClientName("");
         setProjectDesc("");
+        setProjectIsArchived(false);
       } else {
         toast.error("Failed to create project");
       }
@@ -172,6 +176,7 @@ export default function WorkspacePage() {
           clientName: clientName.trim() || null,
           description: projectDesc.trim() || null,
           color: projectColor,
+          isArchived: projectIsArchived,
         }),
       });
 
@@ -191,6 +196,53 @@ export default function WorkspacePage() {
       toast.error("Failed to update project");
     } finally {
       setIsSubmittingProject(false);
+    }
+  };
+
+  // Toggle Archive Project
+  const handleToggleArchiveProject = async (id?: string, newStatus?: boolean) => {
+    const targetId = id || selectedProjectId;
+    if (!targetId) return;
+
+    const proj = projects.find((p) => p.id === targetId) || activeProjectData;
+    const targetStatus = newStatus !== undefined ? newStatus : !proj?.isArchived;
+
+    setArchivingProjectId(targetId);
+    try {
+      const res = await fetch(`/api/projects/${targetId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isArchived: targetStatus }),
+      });
+
+      if (res.ok) {
+        toast.success(targetStatus ? "Project archived successfully" : "Project restored from archive");
+
+        // Optimistically update projects list and active project
+        setProjects((prev) =>
+          prev.map((p) => (p.id === targetId ? { ...p, isArchived: targetStatus } : p))
+        );
+
+        if (targetId === selectedProjectId) {
+          setActiveProjectData((prev: any) =>
+            prev ? { ...prev, isArchived: targetStatus } : prev
+          );
+          setProjectIsArchived(targetStatus);
+        }
+
+        // Silent background refresh of projects list
+        const listRes = await fetch("/api/projects");
+        if (listRes.ok) {
+          const listData = await listRes.json();
+          setProjects(listData.projects || []);
+        }
+      } else {
+        toast.error("Failed to update project archive status");
+      }
+    } catch (err) {
+      toast.error("Failed to update project archive status");
+    } finally {
+      setArchivingProjectId(null);
     }
   };
 
@@ -229,6 +281,38 @@ export default function WorkspacePage() {
     setActiveTab("meetings");
   };
 
+  // Reorder Projects
+  const handleReorderProjects = async (newProjects: ProjectSummary[]) => {
+    // 1. Optimistic update
+    setProjects(newProjects);
+
+    // 2. Persist order to API
+    try {
+      const res = await fetch("/api/projects", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: newProjects.map((p, idx) => ({
+            id: p.id,
+            orderIndex: idx,
+          })),
+        }),
+      });
+
+      if (!res.ok) {
+        toast.error("Failed to save project order");
+        // Rollback from server
+        const listRes = await fetch("/api/projects");
+        if (listRes.ok) {
+          const listData = await listRes.json();
+          setProjects(listData.projects || []);
+        }
+      }
+    } catch (err) {
+      toast.error("Failed to save project order");
+    }
+  };
+
   if (isLoadingUser) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#F3F4F6]">
@@ -257,6 +341,9 @@ export default function WorkspacePage() {
           setProjectColor("#3B82F6");
           setIsNewProjectModalOpen(true);
         }}
+        onArchiveProject={(id, status) => handleToggleArchiveProject(id, status)}
+        onReorderProjects={handleReorderProjects}
+        archivingProjectId={archivingProjectId}
         isOpen={isSidebarOpen}
         onCloseMobile={() => setIsSidebarOpen(false)}
       />
@@ -278,6 +365,8 @@ export default function WorkspacePage() {
               activeTab={activeTab}
               onTabChange={setActiveTab}
               onEditProject={() => setIsEditProjectModalOpen(true)}
+              onArchiveProject={() => handleToggleArchiveProject()}
+              isArchiving={archivingProjectId === activeProjectData.id}
               onDeleteProject={handleDeleteProject}
               onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
             />
@@ -288,12 +377,20 @@ export default function WorkspacePage() {
                 <NotepadModule
                   projectId={activeProjectData.id}
                   notes={activeProjectData.notes || []}
+                  tasks={activeProjectData.tasks || []}
                   onNotesChange={(newNotes) => {
                     setActiveProjectData((prev: any) => ({
                       ...prev,
                       notes: newNotes,
                     }));
                   }}
+                  onTasksChange={(newTasks) => {
+                    setActiveProjectData((prev: any) => ({
+                      ...prev,
+                      tasks: newTasks,
+                    }));
+                  }}
+                  onNavigateToTab={(tab) => setActiveTab(tab)}
                 />
               )}
 
@@ -344,9 +441,18 @@ export default function WorkspacePage() {
               {activeTab === "meetings" && (
                 <MeetingsModule
                   projectId={activeProjectData.id}
+                  projectName={activeProjectData.name}
+                  clientName={activeProjectData.clientName}
+                  tasks={activeProjectData.tasks || []}
                   meetings={activeProjectData.meetings || []}
                   questions={activeProjectData.questions || []}
                   preSelectedQuestionIds={preSelectedMeetingQuestions}
+                  onTasksChange={(newTasks) => {
+                    setActiveProjectData((prev: any) => ({
+                      ...prev,
+                      tasks: newTasks,
+                    }));
+                  }}
                   onMeetingsChange={(newMeetings) => {
                     setActiveProjectData((prev: any) => ({
                       ...prev,
@@ -354,6 +460,13 @@ export default function WorkspacePage() {
                     }));
                     setPreSelectedMeetingQuestions([]);
                   }}
+                  onNotesChange={(newNotes) => {
+                    setActiveProjectData((prev: any) => ({
+                      ...prev,
+                      notes: newNotes,
+                    }));
+                  }}
+                  onNavigateToTab={(tab) => setActiveTab(tab)}
                 />
               )}
 
@@ -530,6 +643,25 @@ export default function WorkspacePage() {
                 />
               ))}
             </div>
+          </div>
+
+          {/* Archive Status Toggle */}
+          <div className="pt-3 border-t border-gray-100 flex items-center justify-between">
+            <div>
+              <p className="text-xs font-bold text-gray-900">Archive this project</p>
+              <p className="text-[11px] text-gray-500">
+                Archived projects are hidden from the active list but can be restored anytime.
+              </p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={projectIsArchived}
+                onChange={(e) => setProjectIsArchived(e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-500"></div>
+            </label>
           </div>
 
           <div className="flex items-center justify-end gap-3 pt-4 border-t-2 border-gray-100">

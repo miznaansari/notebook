@@ -114,7 +114,7 @@ export async function POST(
       return NextResponse.json({ questions: createdQuestions, count: createdQuestions.length }, { status: 201 });
     }
 
-    const { title, details, category, status, priority, forNextMeeting, initialAnswer } = body;
+    const { title, details, category, status, priority, forNextMeeting, initialAnswer, date, createdAt } = body;
 
     if (!title || !title.trim()) {
       return NextResponse.json({ error: "Question title is required." }, { status: 400 });
@@ -134,6 +134,8 @@ export async function POST(
       }
     }
 
+    const questionDate = date ? new Date(date) : createdAt ? new Date(createdAt) : undefined;
+
     const question = await db.question.create({
       data: {
         title: title.trim(),
@@ -143,6 +145,7 @@ export async function POST(
         priority: priority || "MEDIUM",
         forNextMeeting: Boolean(forNextMeeting),
         projectId,
+        createdAt: questionDate,
         answers: initialAnswer
           ? {
               create: [

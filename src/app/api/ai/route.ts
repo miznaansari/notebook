@@ -51,6 +51,32 @@ export async function POST(req: NextRequest) {
         systemInstruction = "You are an expert editor specializing in brevity and clarity. Condense the text into a clean, short, impactful version. Return only the shortened text directly without preamble or quotes.";
         break;
 
+      case "generate_note_description":
+      case "note_description":
+        prompt = `Analyze the following note content and generate a crisp, concise, informative 1-sentence note description (maximum 15-20 words). The description should summarize the core purpose, topic, or key takeaways of the note so the user instantly understands it in note cards. Do NOT wrap in quotes, do NOT add conversational filler like "This note is about", do NOT use markdown symbols. Return only the clean description directly.\n\nNote Title: "${context || ""}"\n\nNote Content:\n${text}`;
+        systemInstruction = "You are a senior technical writer. Return only the concise 1-sentence note description directly without any quotes or preamble.";
+        break;
+
+      case "execute_task":
+      case "do_task":
+      case "create_email_template":
+        prompt = `You are an expert project lead, copywriter, and software consultant.
+The user has assigned this task or requested this deliverable:
+Task: "${text}"
+Context / Project Note: "${context || ""}"
+
+Instructions:
+1. If the task is related to creating an email template (e.g., "create email templete", "client follow up email", "milestone update email", "meeting summary email"), create a polished, ready-to-send email template with:
+   - **Subject:** Crisp and engaging subject line
+   - **Salutation:** e.g., Hi [Client Name / Team],
+   - **Body:** Clear, well-structured email content with key context and bullet points
+   - **Call to Action (CTA) / Next Steps:** Specific deadlines or follow-ups
+   - **Sign-off:** Professional closing
+2. If the task is a technical requirement, QA item, documentation, or planning task, generate a direct, actionable solution, step-by-step checklist, or draft as required.
+3. Keep the output clean, highly professional, practical, and formatted in clean markdown without conversational filler. Return the deliverable directly.`;
+        systemInstruction = "You are an elite business communicator and technical lead. Provide direct, high-value, perfectly drafted deliverables for the requested task.";
+        break;
+
       case "suggest_answer":
         prompt = `For this client question in a web/software project:\nQuestion: "${text}"\nContext: "${context || ""}"\n\nSuggest a recommended, industry standard, best-practice answer and clarification to propose to the client. Keep it concise (2-4 sentences).`;
         systemInstruction = "You are a software architect and consultant. Provide a crisp, practical, best-practice recommendation.";
@@ -89,6 +115,37 @@ Do not include markdown explanation, code fences, or any other text outside the 
         systemInstruction = "You are an expert technical lead and project manager. Parse raw user inputs, bug lists, and notes into clean, actionable, structured task items. Always respond with pure valid JSON array only.";
         break;
 
+      case "generate_daily_summary":
+      case "standup_summary":
+        prompt = `You are an executive project manager and technical lead.
+Analyze the following list of tasks and activities for the date "${context || "Today"}":
+
+"""
+${text}
+"""
+
+Instructions:
+Generate a comprehensive, crystal-clear, and professional Daily Work Accomplishment Summary ("Aaj kya kya kiya") based on the completed tasks and current status.
+
+Provide the response in the following structured JSON format:
+{
+  "headline": "A punchy, 1-line executive overview of today's achievements",
+  "completionRate": "e.g., 5/6 Tasks Completed (83%)",
+  "completedHighlights": [
+    "Brief bullet point of each major accomplishment and key outcome achieved today"
+  ],
+  "inProgressAndNext": [
+    "Key items currently in progress, blockers, or planned for tomorrow"
+  ],
+  "slackWhatsappFormat": "Ready-to-copy WhatsApp / Slack standup message with clean emojis, date, What I Did Today, What's In Progress, and Blockers",
+  "clientEmailFormat": "Professional corporate email draft suitable for sending to clients or stakeholders summarizing today's deliverables and milestone progress",
+  "summaryNotesMarkdown": "Rich markdown text with headings, checklists, and notes formatted ready to be saved into a project Note"
+}
+
+Do not include markdown fences outside the JSON. Return only the valid JSON object.`;
+        systemInstruction = "You are a senior engineering manager and technical lead. Create impactful, crisp, and executive daily accomplishment summaries. Return valid JSON only.";
+        break;
+
       default:
         return NextResponse.json({ error: "Unsupported AI action" }, { status: 400 });
     }
@@ -96,14 +153,27 @@ Do not include markdown explanation, code fences, or any other text outside the 
     const { text: result, modelUsed } = await generateWithGemini(prompt, systemInstruction);
 
     // If json requested, attempt to parse
-    if (action === "generate_questions" || action === "extract_tasks" || action === "generate_tasks") {
+    if (
+      action === "generate_questions" ||
+      action === "extract_tasks" ||
+      action === "generate_tasks" ||
+      action === "generate_daily_summary" ||
+      action === "standup_summary"
+    ) {
       try {
         let cleanedJson = result.trim();
         cleanedJson = cleanedJson.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+        
+        // Check if object or array
+        const objectMatch = cleanedJson.match(/\{[\s\S]*\}/);
         const arrayMatch = cleanedJson.match(/\[[\s\S]*\]/);
-        if (arrayMatch) {
+        
+        if (action === "generate_daily_summary" || action === "standup_summary") {
+          if (objectMatch) cleanedJson = objectMatch[0];
+        } else if (arrayMatch) {
           cleanedJson = arrayMatch[0];
         }
+        
         const parsed = JSON.parse(cleanedJson);
         return NextResponse.json({ result: parsed, modelUsed, raw: result });
       } catch (parseErr) {

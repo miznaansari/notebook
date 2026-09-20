@@ -12,6 +12,9 @@ import {
   Trash2,
   Menu,
   Briefcase,
+  Archive,
+  ArchiveRestore,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -31,6 +34,7 @@ interface WorkspaceHeaderProps {
     clientName?: string | null;
     description?: string | null;
     color?: string;
+    isArchived?: boolean;
     notes: any[];
     questions: any[];
     meetings: any[];
@@ -39,6 +43,8 @@ interface WorkspaceHeaderProps {
   activeTab: WorkspaceTab;
   onTabChange: (tab: WorkspaceTab) => void;
   onEditProject?: () => void;
+  onArchiveProject?: () => void;
+  isArchiving?: boolean;
   onDeleteProject?: () => void;
   onToggleSidebar?: () => void;
 }
@@ -48,6 +54,8 @@ export function WorkspaceHeader({
   activeTab,
   onTabChange,
   onEditProject,
+  onArchiveProject,
+  isArchiving,
   onDeleteProject,
   onToggleSidebar,
 }: WorkspaceHeaderProps) {
@@ -86,10 +94,10 @@ export function WorkspaceHeader({
     },
     {
       id: "meetings",
-      label: "Meetings Log",
-      mobileLabel: "Meetings",
+      label: "Today's Tasks",
+      mobileLabel: "Today's",
       icon: Calendar,
-      count: project.meetings.length,
+      count: project.tasks?.length || 0,
     },
     {
       id: "tasks",
@@ -154,6 +162,11 @@ export function WorkspaceHeader({
               <h1 className="text-sm font-bold text-gray-900 truncate max-w-[140px]">
                 {project.name}
               </h1>
+              {project.isArchived && (
+                <span className="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider shrink-0">
+                  Archived
+                </span>
+              )}
               {project.clientName && (
                 <span className="text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-semibold truncate max-w-[90px]">
                   {project.clientName}
@@ -163,11 +176,36 @@ export function WorkspaceHeader({
           </div>
 
           <div className="flex items-center gap-1 shrink-0">
+            {onArchiveProject && (
+              <button
+                onClick={onArchiveProject}
+                disabled={isArchiving}
+                title={
+                  isArchiving
+                    ? (project.isArchived ? "Restoring project..." : "Archiving project...")
+                    : (project.isArchived ? "Restore Project from Archive" : "Archive Project")
+                }
+                className={cn(
+                  "p-1.5 rounded-md transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed",
+                  project.isArchived
+                    ? "text-amber-600 hover:text-amber-800 hover:bg-amber-50 active:bg-amber-100"
+                    : "text-gray-400 hover:text-amber-600 hover:bg-amber-50 active:bg-amber-100"
+                )}
+              >
+                {isArchiving ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-600" />
+                ) : project.isArchived ? (
+                  <ArchiveRestore className="w-3.5 h-3.5" />
+                ) : (
+                  <Archive className="w-3.5 h-3.5" />
+                )}
+              </button>
+            )}
             {onEditProject && (
               <button
                 onClick={onEditProject}
                 title="Edit Project"
-                className="p-1.5 text-gray-500 hover:text-gray-900 active:bg-gray-100 rounded-md transition"
+                className="p-1.5 text-gray-500 hover:text-gray-900 active:bg-gray-100 rounded-md transition cursor-pointer"
               >
                 <Edit className="w-3.5 h-3.5" />
               </button>
@@ -176,7 +214,7 @@ export function WorkspaceHeader({
               <button
                 onClick={onDeleteProject}
                 title="Delete Project"
-                className="p-1.5 text-gray-400 hover:text-red-600 active:bg-red-50 rounded-md transition"
+                className="p-1.5 text-gray-400 hover:text-red-600 active:bg-red-50 rounded-md transition cursor-pointer"
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
@@ -241,7 +279,7 @@ export function WorkspaceHeader({
             <button
               type="button"
               onClick={onToggleSidebar}
-              className="md:hidden p-1.5 rounded-md hover:bg-gray-100 text-gray-700 transition shrink-0"
+              className="md:hidden p-1.5 rounded-md hover:bg-gray-100 text-gray-700 transition shrink-0 cursor-pointer"
               aria-label="Toggle sidebar"
             >
               <Menu className="w-5 h-5" />
@@ -256,6 +294,11 @@ export function WorkspaceHeader({
             <h1 className="text-sm sm:text-base font-bold text-gray-900 truncate">
               {project.name}
             </h1>
+            {project.isArchived && (
+              <span className="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-bold uppercase tracking-wider shrink-0">
+                Archived
+              </span>
+            )}
             {project.clientName && (
               <span className="hidden sm:inline-block text-[11px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-semibold truncate max-w-[120px]">
                 {project.clientName}
@@ -264,11 +307,36 @@ export function WorkspaceHeader({
           </div>
 
           <div className="flex items-center gap-1 shrink-0 ml-1">
+            {onArchiveProject && (
+              <button
+                onClick={onArchiveProject}
+                disabled={isArchiving}
+                title={
+                  isArchiving
+                    ? (project.isArchived ? "Restoring project..." : "Archiving project...")
+                    : (project.isArchived ? "Restore Project from Archive" : "Archive Project")
+                }
+                className={cn(
+                  "p-1 rounded transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed",
+                  project.isArchived
+                    ? "text-amber-600 hover:text-amber-800 hover:bg-amber-50"
+                    : "text-gray-400 hover:text-amber-600 hover:bg-amber-50"
+                )}
+              >
+                {isArchiving ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-600" />
+                ) : project.isArchived ? (
+                  <ArchiveRestore className="w-3.5 h-3.5" />
+                ) : (
+                  <Archive className="w-3.5 h-3.5" />
+                )}
+              </button>
+            )}
             {onEditProject && (
               <button
                 onClick={onEditProject}
                 title="Edit Project Details"
-                className="p-1 text-gray-400 hover:text-gray-900 rounded hover:bg-gray-100 transition"
+                className="p-1 text-gray-400 hover:text-gray-900 rounded hover:bg-gray-100 transition cursor-pointer"
               >
                 <Edit className="w-3.5 h-3.5" />
               </button>
@@ -277,7 +345,7 @@ export function WorkspaceHeader({
               <button
                 onClick={onDeleteProject}
                 title="Delete Project"
-                className="p-1 text-gray-400 hover:text-red-600 rounded hover:bg-red-50 transition"
+                className="p-1 text-gray-400 hover:text-red-600 rounded hover:bg-red-50 transition cursor-pointer"
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>

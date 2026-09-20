@@ -46,13 +46,14 @@ export async function PUT(
     if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
 
     const body = await req.json();
-    const { title, content, isPinned, tags } = body;
+    const { title, content, description, isPinned, tags } = body;
 
     const note = await db.note.update({
       where: { id: noteId },
       data: {
         title: title !== undefined ? title.trim() : undefined,
         content: content !== undefined ? content : undefined,
+        description: description !== undefined ? (description?.trim() || null) : undefined,
         isPinned: isPinned !== undefined ? Boolean(isPinned) : undefined,
         tags: tags !== undefined ? tags?.trim() || null : undefined,
       },

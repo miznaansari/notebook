@@ -11,13 +11,13 @@ export async function GET(req: NextRequest) {
     }
 
     const { searchParams } = new URL(req.url);
-    const includeArchived = searchParams.get("archived") === "true";
+    const archivedParam = searchParams.get("archived");
     const query = searchParams.get("q") || "";
 
     const projects = await db.project.findMany({
       where: {
         userId: auth.userId,
-        isArchived: includeArchived ? undefined : false,
+        isArchived: archivedParam !== null ? archivedParam === "true" : undefined,
         OR: query
           ? [
               { name: { contains: query } },
@@ -50,9 +50,10 @@ export async function GET(req: NextRequest) {
           },
         },
       },
-      orderBy: {
-        updatedAt: "desc",
-      },
+      orderBy: [
+        { orderIndex: "asc" },
+        { updatedAt: "desc" },
+      ],
     });
 
     const formattedProjects = projects.map((p) => {
@@ -70,6 +71,7 @@ export async function GET(req: NextRequest) {
         color: p.color,
         icon: p.icon,
         isArchived: p.isArchived,
+        orderIndex: p.orderIndex ?? 0,
         createdAt: p.createdAt,
         updatedAt: p.updatedAt,
         notesCount: p._count.notes,
@@ -86,6 +88,40 @@ export async function GET(req: NextRequest) {
   } catch (error: any) {
     console.error("Error fetching projects:", error);
     return NextResponse.json({ error: "Failed to fetch projects" }, { status: 500 });
+  }
+}
+
+// PATCH /api/projects - Batch reorder projects
+export async function PATCH(req: NextRequest) {
+  try {
+    const auth = await getAuthUserFromRequest(req);
+    if (!auth) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const body = await req.json();
+    const items = body.items || body.reorderedProjects || body.projects;
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return NextResponse.json({ error: "Invalid items array" }, { status: 400 });
+    }
+
+    // Execute bulk update in transaction
+    await db.$transaction(
+      items.map((item: { id: string; orderIndex?: number }, idx: number) =>
+        db.project.updateMany({
+          where: { id: item.id, userId: auth.userId },
+          data: {
+            orderIndex: typeof item.orderIndex === "number" ? item.orderIndex : idx,
+          },
+        })
+      )
+    );
+
+    return NextResponse.json({ success: true, count: items.length });
+  } catch (error: any) {
+    console.error("Error reordering projects:", error);
+    return NextResponse.json({ error: "Failed to reorder projects" }, { status: 500 });
   }
 }
 

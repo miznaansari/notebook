@@ -50,12 +50,13 @@ export async function POST(
     if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
 
     const body = await req.json();
-    const { title, content, isPinned, tags } = body;
+    const { title, content, description, isPinned, tags } = body;
 
     const note = await db.note.create({
       data: {
         title: title?.trim() || "Untitled Note",
         content: content || "",
+        description: description?.trim() || null,
         isPinned: Boolean(isPinned),
         tags: tags?.trim() || null,
         projectId,

@@ -41,9 +41,24 @@ import {
   Search,
   Scissors,
   ChevronLeft,
+  ChevronDown,
+  ChevronUp,
+  CheckCircle2,
+  AlertCircle,
+  ArrowRight,
+  ExternalLink,
+  Mail,
+  Zap,
+  Play,
+  Send,
+  Layers,
+  ListCheck,
+  PenTool,
+  CornerDownLeft,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Modal } from "@/components/ui/modal";
 import { AIMagicButton } from "@/components/ui/ai-magic-button";
 import { VoiceMicButton } from "@/components/ui/voice-mic-button";
 import { cn, formatDate } from "@/lib/utils";
@@ -53,6 +68,7 @@ export interface NoteItem {
   id: string;
   title: string;
   content: string;
+  description?: string | null;
   isPinned: boolean;
   tags?: string | null;
   createdAt: string;
@@ -62,7 +78,10 @@ export interface NoteItem {
 interface NotepadModuleProps {
   projectId: string;
   notes: NoteItem[];
+  tasks?: any[];
   onNotesChange: (updatedNotes: NoteItem[]) => void;
+  onTasksChange?: (updatedTasks: any[]) => void;
+  onNavigateToTab?: (tab: any) => void;
 }
 
 interface ContextMenuState {
@@ -72,6 +91,11 @@ interface ContextMenuState {
   selectedText: string;
   selectionStart: number;
   selectionEnd: number;
+  lineIdx?: number;
+  lineType?: string;
+  isChecked?: boolean;
+  multiLineStart?: number;
+  multiLineEnd?: number;
 }
 
 interface SlashMenuState {
@@ -92,18 +116,32 @@ interface FloatingBubbleState {
   end: number;
 }
 
-export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModuleProps) {
+export function NotepadModule({
+  projectId,
+  notes,
+  tasks = [],
+  onNotesChange,
+  onTasksChange,
+  onNavigateToTab,
+}: NotepadModuleProps) {
   const [activeNoteId, setActiveNoteId] = React.useState<string | null>(
     notes.length > 0 ? notes[0].id : null
   );
   const [currentTitle, setCurrentTitle] = React.useState("");
   const [currentContent, setCurrentContent] = React.useState("");
+  const [currentDescription, setCurrentDescription] = React.useState<string | null>(null);
   const [currentTags, setCurrentTags] = React.useState("");
   const [isPinned, setIsPinned] = React.useState(false);
   const [saveStatus, setSaveStatus] = React.useState<"saved" | "saving" | "unsaved">("saved");
-  const [viewMode, setViewMode] = React.useState<"edit" | "preview" | "split">("edit");
+  const [viewMode, setViewMode] = React.useState<"interactive" | "markdown" | "split">("interactive");
   const [searchNotes, setSearchNotes] = React.useState("");
   const [mobileView, setMobileView] = React.useState<"list" | "editor">(notes.length > 0 ? "editor" : "list");
+
+  // Multi-tier AI description generation tracking (15 words -> tier 1, 30 words -> tier 2, 50 words -> tier 3)
+  const noteDescTiersRef = React.useRef<{ [noteId: string]: number }>({});
+  const descAiTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+  const isGeneratingDescRef = React.useRef(false);
+  const latestDescriptionRef = React.useRef<string | null>(null);
 
   // Undo / Redo history stack tracking
   const [history, setHistory] = React.useState<string[]>([]);
@@ -123,9 +161,38 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
   const [isAiProcessingSelection, setIsAiProcessingSelection] = React.useState(false);
   const [activeAiAction, setActiveAiAction] = React.useState<string | null>(null);
 
+  // Task AI Deliverable Modal State
+  const [taskDeliverableModal, setTaskDeliverableModal] = React.useState<{
+    isOpen: boolean;
+    taskTitle: string;
+    lineIndex?: number;
+    deliverable: string;
+    isLoading: boolean;
+  }>({
+    isOpen: false,
+    taskTitle: "",
+    deliverable: "",
+    isLoading: false,
+  });
+  const [isSyncingTasks, setIsSyncingTasks] = React.useState(false);
+  const [isCreatingNote, setIsCreatingNote] = React.useState(false);
+  const [executingTaskTitle, setExecutingTaskTitle] = React.useState<string | null>(null);
+  const [executingLineIndex, setExecutingLineIndex] = React.useState<number | null>(null);
+  const [activeTaskAiMenu, setActiveTaskAiMenu] = React.useState<{ lineIdx: number; taskText: string } | null>(null);
+  const [taskAiLoadingIdx, setTaskAiLoadingIdx] = React.useState<number | null>(null);
+
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const editorContainerRef = React.useRef<HTMLDivElement>(null);
   const autoSaveTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+
+  // Line element refs, active cursor line ref, and pending focus tracking for seamless in-place formatting & navigation
+  const lineInputRefs = React.useRef<{ [key: number]: HTMLTextAreaElement | HTMLInputElement | null }>({});
+  const activeInteractiveLineRef = React.useRef<{ lineIdx: number; cursorPos: number }>({ lineIdx: 0, cursorPos: 0 });
+  // Multi-Line Selection State in Interactive Mode
+  const [selectedLineRange, setSelectedLineRange] = React.useState<{ start: number; end: number } | null>(null);
+  const isMouseDownSelectingRef = React.useRef(false);
+  const selectionStartLineRef = React.useRef<number | null>(null);
+  const [pendingFocus, setPendingFocus] = React.useState<{ lineIdx: number; cursorPos?: number } | null>(null);
 
   // Refs to track absolute latest state without stale closure or prop-overwrite issues
   const latestContentRef = React.useRef("");
@@ -158,9 +225,115 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
     setHistoryIndex(nextIdx);
   }, []);
 
+  // Word count & Tier calculation helper (15 words -> Tier 1, 30 words -> Tier 2, 50 words -> Tier 3)
+  const countWords = (text: string): number => {
+    return text.trim() ? text.trim().split(/\s+/).filter(Boolean).length : 0;
+  };
+
+  const getWordTier = (wordCount: number): 0 | 1 | 2 | 3 => {
+    if (wordCount >= 50) return 3;
+    if (wordCount >= 30) return 2;
+    if (wordCount >= 15) return 1;
+    return 0;
+  };
+
+  // Trigger AI to generate / refine note description
+  const triggerAiDescriptionGeneration = React.useCallback(
+    async (noteId: string, title: string, content: string, targetTier: number) => {
+      if (!noteId || isGeneratingDescRef.current) return;
+      isGeneratingDescRef.current = true;
+      try {
+        const res = await fetch("/api/ai", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "generate_note_description",
+            text: content.slice(0, 3000),
+            context: title || "Untitled Note",
+          }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const generatedDesc = data.result?.trim();
+          if (generatedDesc) {
+            noteDescTiersRef.current[noteId] = targetTier;
+            if (latestActiveIdRef.current === noteId) {
+              setCurrentDescription(generatedDesc);
+              latestDescriptionRef.current = generatedDesc;
+            }
+            onNotesChange(
+              notes.map((n) => (n.id === noteId ? { ...n, description: generatedDesc } : n))
+            );
+            await fetch(`/api/projects/${projectId}/notes/${noteId}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ description: generatedDesc }),
+            });
+          }
+        }
+      } catch (err) {
+        console.error("Auto description generation failed:", err);
+      } finally {
+        isGeneratingDescRef.current = false;
+      }
+    },
+    [projectId, notes, onNotesChange]
+  );
+
+  // Check word count tier and handle reset on erase or trigger on word thresholds
+  const checkAutoDescriptionTier = React.useCallback(
+    (noteId: string, title: string, content: string) => {
+      if (!noteId) return;
+      const words = countWords(content);
+      const tier = getWordTier(words);
+      const lastTier = noteDescTiersRef.current[noteId] || 0;
+
+      // If dropped below 15 words: clear old description & reset tier to 0
+      if (words < 15) {
+        if (lastTier > 0 || latestDescriptionRef.current !== null) {
+          noteDescTiersRef.current[noteId] = 0;
+          latestDescriptionRef.current = null;
+          setCurrentDescription(null);
+          onNotesChange(
+            notes.map((n) => (n.id === noteId ? { ...n, description: null } : n))
+          );
+        }
+        if (descAiTimeoutRef.current) {
+          clearTimeout(descAiTimeoutRef.current);
+          descAiTimeoutRef.current = null;
+        }
+        return;
+      }
+
+      // If user erased words from a higher tier to a lower tier (e.g., from tier 3 to tier 1)
+      if (tier < lastTier) {
+        noteDescTiersRef.current[noteId] = tier;
+      }
+
+      // If user typed/re-typed and reached 15 words (tier 1), 30 words (tier 2), or 50 words (tier 3)
+      if (tier > 0 && tier > (noteDescTiersRef.current[noteId] || 0)) {
+        if (descAiTimeoutRef.current) {
+          clearTimeout(descAiTimeoutRef.current);
+        }
+        descAiTimeoutRef.current = setTimeout(() => {
+          triggerAiDescriptionGeneration(noteId, title, content, tier);
+        }, 1000);
+      }
+    },
+    [notes, onNotesChange, triggerAiDescriptionGeneration]
+  );
+
   // Flush pending save immediately to server
   const saveNoteToServer = React.useCallback(
-    async (noteId: string, title: string, content: string, tags: string, pinned: boolean) => {
+    async (
+      noteId: string,
+      title: string,
+      content: string,
+      tags: string,
+      pinned: boolean,
+      description?: string | null
+    ) => {
       if (!noteId) return;
       setSaveStatus("saving");
       try {
@@ -170,6 +343,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
           body: JSON.stringify({
             title: title.trim() || "Untitled Note",
             content,
+            description: description !== undefined ? description : latestDescriptionRef.current,
             tags,
             isPinned: pinned,
           }),
@@ -198,6 +372,15 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
       clearTimeout(autoSaveTimeoutRef.current);
     }
 
+    // Trigger word threshold check for AI description auto-generation
+    if (latestActiveIdRef.current) {
+      checkAutoDescriptionTier(
+        latestActiveIdRef.current,
+        latestTitleRef.current,
+        latestContentRef.current
+      );
+    }
+
     autoSaveTimeoutRef.current = setTimeout(() => {
       if (latestActiveIdRef.current) {
         saveNoteToServer(
@@ -205,11 +388,12 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
           latestTitleRef.current,
           latestContentRef.current,
           latestTagsRef.current,
-          latestPinnedRef.current
+          latestPinnedRef.current,
+          latestDescriptionRef.current
         );
       }
     }, 1200);
-  }, [saveNoteToServer]);
+  }, [saveNoteToServer, checkAutoDescriptionTier]);
 
   // Undo handler (Restores previous snapshot)
   const handleUndo = React.useCallback(() => {
@@ -267,16 +451,31 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
       if (targetNote) {
         setCurrentTitle(targetNote.title);
         setCurrentContent(targetNote.content);
+        setCurrentDescription(targetNote.description || null);
         setCurrentTags(targetNote.tags || "");
         setIsPinned(targetNote.isPinned);
         setSaveStatus("saved");
 
         latestTitleRef.current = targetNote.title;
         latestContentRef.current = targetNote.content;
+        latestDescriptionRef.current = targetNote.description || null;
         latestTagsRef.current = targetNote.tags || "";
         latestPinnedRef.current = targetNote.isPinned;
         latestActiveIdRef.current = targetNote.id;
         lastLoadedNoteIdRef.current = targetNote.id;
+
+        // Initialize tier tracking for note
+        if (noteDescTiersRef.current[targetNote.id] === undefined) {
+          const words = countWords(targetNote.content);
+          if (targetNote.description) {
+            if (words >= 50) noteDescTiersRef.current[targetNote.id] = 3;
+            else if (words >= 30) noteDescTiersRef.current[targetNote.id] = 2;
+            else if (words >= 15) noteDescTiersRef.current[targetNote.id] = 1;
+            else noteDescTiersRef.current[targetNote.id] = 0;
+          } else {
+            noteDescTiersRef.current[targetNote.id] = 0;
+          }
+        }
 
         // Reset history stack for the loaded note
         const initialContent = targetNote.content;
@@ -291,22 +490,99 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
     }
   }, [activeNoteId, notes]);
 
+  // Focus next line automatically when Enter or Backspace is pressed in Interactive Mode
+  React.useEffect(() => {
+    if (pendingFocus !== null) {
+      const el = lineInputRefs.current[pendingFocus.lineIdx];
+      if (el) {
+        el.focus();
+        const pos = pendingFocus.cursorPos ?? 0;
+        if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
+          try {
+            el.setSelectionRange(pos, pos);
+            if (el instanceof HTMLTextAreaElement) {
+              el.style.height = "auto";
+              el.style.height = `${el.scrollHeight}px`;
+            }
+          } catch (e) {
+            // Ignore if element is not focusable
+          }
+        }
+      }
+      setPendingFocus(null);
+    }
+  }, [currentContent, pendingFocus]);
+
   // Clean up on unmount
   React.useEffect(() => {
     return () => {
       if (autoSaveTimeoutRef.current) clearTimeout(autoSaveTimeoutRef.current);
       if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      if (descAiTimeoutRef.current) clearTimeout(descAiTimeoutRef.current);
     };
   }, []);
 
-  // Global Keyboard Shortcuts (Ctrl+S, Ctrl+Z, Ctrl+Y, Escape)
+  // Global Keyboard Shortcuts (Ctrl+S, Ctrl+Z, Ctrl+Y, Ctrl+C, Ctrl+X, Backspace, Escape)
   React.useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        setSelectedLineRange(null);
         setContextMenu(null);
         setSlashMenu(null);
         setBubbleToolbar(null);
+        setActiveTaskAiMenu(null);
       }
+
+      // Multi-line selection Copy (Ctrl+C / Cmd+C)
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c" && selectedLineRange) {
+        const lines = latestContentRef.current.split("\n");
+        const selText = lines.slice(selectedLineRange.start, selectedLineRange.end + 1).join("\n");
+        if (selText) {
+          e.preventDefault();
+          navigator.clipboard.writeText(selText);
+          toast.success(`Copied ${selectedLineRange.end - selectedLineRange.start + 1} lines to clipboard!`);
+        }
+      }
+
+      // Multi-line selection Cut (Ctrl+X / Cmd+X)
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "x" && selectedLineRange) {
+        const lines = latestContentRef.current.split("\n");
+        const selText = lines.slice(selectedLineRange.start, selectedLineRange.end + 1).join("\n");
+        if (selText) {
+          e.preventDefault();
+          navigator.clipboard.writeText(selText);
+          lines.splice(selectedLineRange.start, selectedLineRange.end - selectedLineRange.start + 1, "");
+          const newFull = lines.join("\n");
+          if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+          pushHistorySnapshot(latestContentRef.current);
+          pushHistorySnapshot(newFull);
+          setCurrentContent(newFull);
+          latestContentRef.current = newFull;
+          scheduleAutoSave();
+          setSelectedLineRange(null);
+          setPendingFocus({ lineIdx: selectedLineRange.start, cursorPos: 0 });
+          toast.success("Cut selected lines!");
+        }
+      }
+
+      // Multi-line selection Delete / Backspace
+      if ((e.key === "Backspace" || e.key === "Delete") && selectedLineRange) {
+        e.preventDefault();
+        const lines = latestContentRef.current.split("\n");
+        lines.splice(selectedLineRange.start, selectedLineRange.end - selectedLineRange.start + 1, "");
+        const newFull = lines.length === 0 ? [""] : lines;
+        const newFullContent = newFull.join("\n");
+        if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+        pushHistorySnapshot(latestContentRef.current);
+        pushHistorySnapshot(newFullContent);
+        setCurrentContent(newFullContent);
+        latestContentRef.current = newFullContent;
+        scheduleAutoSave();
+        setSelectedLineRange(null);
+        setPendingFocus({ lineIdx: Math.max(0, selectedLineRange.start - 1), cursorPos: 0 });
+        toast.info("Deleted selected lines");
+      }
+
       // Save Shortcut
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
         e.preventDefault();
@@ -344,19 +620,53 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
     const handleClickOutside = () => {
       setContextMenu(null);
       setSlashMenu(null);
+      setActiveTaskAiMenu(null);
+    };
+
+    const handleGlobalMouseUp = () => {
+      isMouseDownSelectingRef.current = false;
     };
 
     window.addEventListener("keydown", handleGlobalKeyDown);
     window.addEventListener("click", handleClickOutside);
+    window.addEventListener("mouseup", handleGlobalMouseUp);
     return () => {
       window.removeEventListener("keydown", handleGlobalKeyDown);
       window.removeEventListener("click", handleClickOutside);
+      window.removeEventListener("mouseup", handleGlobalMouseUp);
     };
-  }, [saveNoteToServer, handleUndo, handleRedo]);
+  }, [saveNoteToServer, handleUndo, handleRedo, selectedLineRange]);
 
   // Slash Command Definitions (Notion Style)
   const slashCommands = React.useMemo(
     () => [
+      {
+        id: "checkbox",
+        title: "Task Checkbox",
+        description: "Interactive task checkbox (/--checkbox ... --/ or - [ ])",
+        icon: CheckSquare,
+        prefix: "- [ ] ",
+        suffix: "",
+        color: "text-blue-500 bg-blue-50",
+      },
+      {
+        id: "email_template",
+        title: "Email Template Task",
+        description: "Task item to generate / draft client email template",
+        icon: Mail,
+        prefix: "- [ ] create email template: ",
+        suffix: "",
+        color: "text-amber-500 bg-amber-50",
+      },
+      {
+        id: "task",
+        title: "Action Item Task",
+        description: "Action task item with AI support and workspace sync",
+        icon: CheckCircle2,
+        prefix: "- [ ] ",
+        suffix: "",
+        color: "text-emerald-500 bg-emerald-50",
+      },
       {
         id: "h1",
         title: "Heading 1",
@@ -401,15 +711,6 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
         prefix: "1. ",
         suffix: "",
         color: "text-amber-500 bg-amber-50",
-      },
-      {
-        id: "todo",
-        title: "To-do Checklist",
-        description: "Task item with interactive box (- [ ] )",
-        icon: CheckSquare,
-        prefix: "- [ ] ",
-        suffix: "",
-        color: "text-rose-500 bg-rose-50",
       },
       {
         id: "callout",
@@ -499,6 +800,48 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
 
   // Helper to wrap or replace text with markdown formatting
   const applyFormatting = (prefix: string, suffix: string = "") => {
+    if (viewMode === "interactive") {
+      const lines = currentContent ? currentContent.split("\n") : [""];
+      const targetIdx = Math.max(0, Math.min(activeInteractiveLineRef.current.lineIdx, lines.length - 1));
+      const currentLine = lines[targetIdx] ?? "";
+      const rawText = currentLine.replace(/^(\s*-\s*\[([ xX])?\]\s*|#+\s*|>\s*💡?\s*|-\s*)/, "").trim();
+
+      let targetFocusIdx = targetIdx;
+
+      if (prefix === "# " || prefix === "## " || prefix === "### ") {
+        lines[targetIdx] = `${prefix}${rawText}`;
+      } else if (prefix === "- ") {
+        lines[targetIdx] = `- ${rawText}`;
+      } else if (prefix === "> 💡 **Note:** ") {
+        lines[targetIdx] = `> 💡 ${rawText || "Note"}`;
+      } else if (prefix === "> ") {
+        lines[targetIdx] = `> ${rawText}`;
+      } else if (prefix === "```\n") {
+        lines.splice(targetIdx + 1, 0, "```\ncode here\n```");
+        targetFocusIdx = targetIdx + 1;
+      } else {
+        // Inline formatting (bold, italic, strikethrough, highlight)
+        if (currentLine.trim() === "") {
+          lines[targetIdx] = `${prefix}text${suffix}`;
+        } else {
+          lines[targetIdx] = `${prefix}${currentLine}${suffix}`;
+        }
+      }
+
+      const newFull = lines.join("\n");
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      pushHistorySnapshot(currentContent);
+      pushHistorySnapshot(newFull);
+      setCurrentContent(newFull);
+      latestContentRef.current = newFull;
+      scheduleAutoSave();
+
+      setPendingFocus({ lineIdx: targetFocusIdx, cursorPos: lines[targetFocusIdx].length });
+      activeInteractiveLineRef.current = { lineIdx: targetFocusIdx, cursorPos: lines[targetFocusIdx].length };
+      toast.success(`Applied ${prefix.trim()} at cursor`);
+      return;
+    }
+
     const textarea = textareaRef.current;
     if (!textarea) return;
 
@@ -569,9 +912,9 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
         setSlashMenu((prev) =>
           prev
             ? {
-                ...prev,
-                selectedIndex: (prev.selectedIndex + 1) % filteredSlashCommands.length,
-              }
+              ...prev,
+              selectedIndex: (prev.selectedIndex + 1) % filteredSlashCommands.length,
+            }
             : null
         );
         return;
@@ -581,11 +924,11 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
         setSlashMenu((prev) =>
           prev
             ? {
-                ...prev,
-                selectedIndex:
-                  (prev.selectedIndex - 1 + filteredSlashCommands.length) %
-                  filteredSlashCommands.length,
-              }
+              ...prev,
+              selectedIndex:
+                (prev.selectedIndex - 1 + filteredSlashCommands.length) %
+                filteredSlashCommands.length,
+            }
             : null
         );
         return;
@@ -712,6 +1055,29 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
         return;
       }
 
+      // A.2) Custom Task Shortcut syntax on Enter: /--checkbox <task> --/ or /--checkbox <task>
+      const customTaskMatch = currentLine.match(/^(\s*)(?:\/--checkbox|\/checkbox|\/task)\s+(.*?)(?:\s*--\/)?$/i);
+      if (customTaskMatch) {
+        const indent = customTaskMatch[1] || "";
+        const taskText = customTaskMatch[2].trim();
+        e.preventDefault();
+        const replacementLine = `${indent}- [ ] ${taskText}\n${indent}- [ ] `;
+        const newContent = value.substring(0, lineStart) + replacementLine + value.substring(selectionEnd);
+
+        if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+        pushHistorySnapshot(value);
+        pushHistorySnapshot(newContent);
+
+        setCurrentContent(newContent);
+        latestContentRef.current = newContent;
+        scheduleAutoSave();
+        setTimeout(() => {
+          const newPos = lineStart + replacementLine.length;
+          textarea.setSelectionRange(newPos, newPos);
+        }, 0);
+        return;
+      }
+
       // B) Numbered List: 1. Item
       const numMatch = currentLine.match(/^(\s*)(\d+)\.\s+(.*)$/);
       if (numMatch) {
@@ -720,7 +1086,6 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
         const itemText = numMatch[3];
 
         if (itemText.trim().length === 0) {
-          // Empty number item: Exit list mode
           e.preventDefault();
           const newContent = value.substring(0, lineStart) + value.substring(selectionStart);
           setCurrentContent(newContent);
@@ -732,7 +1097,6 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
           return;
         }
 
-        // Continue numbered list
         e.preventDefault();
         const nextNum = currentNum + 1;
         const continuation = `\n${indent}${nextNum}. `;
@@ -758,7 +1122,6 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
         const itemText = bulletMatch[3];
 
         if (itemText.trim().length === 0) {
-          // Empty bullet item: Exit bullet mode
           e.preventDefault();
           const newContent = value.substring(0, lineStart) + value.substring(selectionStart);
           setCurrentContent(newContent);
@@ -770,7 +1133,6 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
           return;
         }
 
-        // Continue bullet point
         e.preventDefault();
         const continuation = `\n${indent}- `;
         const newContent = value.substring(0, selectionStart) + continuation + value.substring(selectionEnd);
@@ -795,7 +1157,6 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
         const itemText = quoteMatch[2];
 
         if (itemText.trim().length === 0) {
-          // Empty quote line: Exit quote block
           e.preventDefault();
           const newContent = value.substring(0, lineStart) + value.substring(selectionStart);
           setCurrentContent(newContent);
@@ -807,7 +1168,6 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
           return;
         }
 
-        // Continue quote block
         e.preventDefault();
         const continuation = `\n${indent}> `;
         const newContent = value.substring(0, selectionStart) + continuation + value.substring(selectionEnd);
@@ -821,7 +1181,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
       }
     }
 
-    // 5. Live Space Key Auto-Transformations (# , ## , - , [] , 1. , > )
+    // 5. Live Space Key Auto-Transformations (# , ## , - , [] , 1. , > , /--checkbox )
     if (e.key === " " && selectionStart === selectionEnd) {
       const lineStart = value.lastIndexOf("\n", selectionStart - 1) + 1;
       const linePrefix = value.substring(lineStart, selectionStart);
@@ -830,10 +1190,15 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
         { pattern: "###", replaceWith: "### " },
         { pattern: "##", replaceWith: "## " },
         { pattern: "#", replaceWith: "# " },
+        { pattern: "/--checkbox", replaceWith: "- [ ] " },
+        { pattern: "/checkbox", replaceWith: "- [ ] " },
+        { pattern: "/task", replaceWith: "- [ ] " },
         { pattern: "-", replaceWith: "- " },
         { pattern: "*", replaceWith: "- " },
         { pattern: "[]", replaceWith: "- [ ] " },
         { pattern: "[ ]", replaceWith: "- [ ] " },
+        { pattern: "[x]", replaceWith: "- [x] " },
+        { pattern: "[X]", replaceWith: "- [x] " },
         { pattern: "1.", replaceWith: "1. " },
         { pattern: ">", replaceWith: "> " },
       ];
@@ -855,12 +1220,19 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
     }
   };
 
-  // Textarea Change Handler (debounced history snapshot & slash command detection)
+  // Textarea Change Handler (debounced history snapshot & slash command detection & /--checkbox auto-transform)
   const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     const cursorPos = e.target.selectionStart;
-    setCurrentContent(val);
-    latestContentRef.current = val;
+
+    // Auto-detect and transform inline /--checkbox ... --/ syntax
+    let nextVal = val;
+    if (nextVal.includes("/--checkbox") && nextVal.includes("--/")) {
+      nextVal = nextVal.replace(/\/--checkbox\s*(.*?)\s*--\//gi, "- [ ] $1");
+    }
+
+    setCurrentContent(nextVal);
+    latestContentRef.current = nextVal;
     scheduleAutoSave();
 
     // Debounce history snapshot for typing
@@ -868,12 +1240,12 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
       clearTimeout(typingTimerRef.current);
     }
     typingTimerRef.current = setTimeout(() => {
-      pushHistorySnapshot(val);
+      pushHistorySnapshot(nextVal);
     }, 600);
 
     // Detect Slash Command trigger (/)
-    const lineStart = val.lastIndexOf("\n", cursorPos - 1) + 1;
-    const currentLine = val.substring(lineStart, cursorPos);
+    const lineStart = nextVal.lastIndexOf("\n", cursorPos - 1) + 1;
+    const currentLine = nextVal.substring(lineStart, cursorPos);
 
     const slashMatch = currentLine.match(/(?:^|\s)\/([a-zA-Z0-9_-]*)$/);
     if (slashMatch) {
@@ -917,42 +1289,235 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
     }
   };
 
-  // Right-Click Context Menu for Selection AI
-  const handleContextMenu = (e: React.MouseEvent<HTMLTextAreaElement>) => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
+  // Right-Click Context Menu for Selection AI (Supports Markdown mode textarea and Interactive mode lines / multi-line selection)
+  const handleContextMenu = (
+    e: React.MouseEvent<HTMLTextAreaElement | HTMLInputElement | HTMLDivElement>,
+    lineIdx?: number,
+    lineType?: string,
+    isChecked?: boolean
+  ) => {
+    const target = e.currentTarget as HTMLTextAreaElement | HTMLInputElement;
+    let selectedText = "";
+    let start = 0;
+    let end = 0;
+    let multiStart: number | undefined;
+    let multiEnd: number | undefined;
 
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const selectedText = currentContent.substring(start, end).trim();
+    // 1. If user has selected a multi-line range in Interactive mode
+    if (selectedLineRange) {
+      const lines = currentContent.split("\n");
+      const multiText = lines.slice(selectedLineRange.start, selectedLineRange.end + 1).join("\n").trim();
+      if (multiText.length > 0) {
+        selectedText = multiText;
+        multiStart = selectedLineRange.start;
+        multiEnd = selectedLineRange.end;
+      }
+    } else if (lineIdx !== undefined) {
+      // 2. Interactive mode single line element
+      const selStart = target.selectionStart ?? 0;
+      const selEnd = target.selectionEnd ?? 0;
+      if (selEnd > selStart) {
+        selectedText = target.value.substring(selStart, selEnd).trim();
+        start = selStart;
+        end = selEnd;
+      } else {
+        const winSel = window.getSelection()?.toString()?.trim();
+        if (winSel && winSel.length > 0) {
+          selectedText = winSel;
+          start = selStart;
+          end = selEnd;
+        } else if (target.value && target.value.trim().length > 0) {
+          selectedText = target.value.trim();
+          start = 0;
+          end = target.value.length;
+        }
+      }
+    } else {
+      // 3. Markdown mode textarea
+      const textarea = textareaRef.current || (target as HTMLTextAreaElement);
+      if (!textarea) return;
+
+      const selStart = textarea.selectionStart ?? 0;
+      const selEnd = textarea.selectionEnd ?? 0;
+      if (selEnd > selStart) {
+        selectedText = currentContent.substring(selStart, selEnd).trim();
+        start = selStart;
+        end = selEnd;
+      } else {
+        const winSel = window.getSelection()?.toString()?.trim();
+        if (winSel && winSel.length > 0) {
+          selectedText = winSel;
+          start = selStart;
+          end = selEnd;
+        }
+      }
+    }
 
     if (selectedText.length > 0) {
       e.preventDefault();
-      const menuWidth = 290;
-      const menuHeight = 330;
-      const x = Math.min(e.clientX, window.innerWidth - menuWidth - 10);
-      const y = Math.min(e.clientY, window.innerHeight - menuHeight - 10);
+      e.stopPropagation();
+      const menuWidth = Math.min(290, window.innerWidth - 20);
+      const menuHeight = Math.min(460, window.innerHeight - 30);
+      const x = Math.max(10, Math.min(e.clientX, window.innerWidth - menuWidth - 15));
+      const y = Math.max(10, Math.min(e.clientY, window.innerHeight - menuHeight - 15));
 
       setContextMenu({
         isOpen: true,
-        x: Math.max(10, x),
-        y: Math.max(10, y),
+        x,
+        y,
         selectedText,
         selectionStart: start,
         selectionEnd: end,
+        lineIdx,
+        lineType,
+        isChecked,
+        multiLineStart: multiStart,
+        multiLineEnd: multiEnd,
       });
     } else {
       setContextMenu(null);
     }
   };
 
-  // Execute AI action on selected text range
+  // Execute AI action on selected text range (Supports Markdown full document, Interactive single line, and Multi-line selection)
   const handleAiActionOnSelection = async (action: string) => {
     const targetSelected = contextMenu?.selectedText || bubbleToolbar?.selectedText;
     const start = contextMenu?.selectionStart ?? bubbleToolbar?.start;
     const end = contextMenu?.selectionEnd ?? bubbleToolbar?.end;
+    const lineIdx = contextMenu?.lineIdx;
+    const lineType = contextMenu?.lineType;
+    const isChecked = contextMenu?.isChecked;
+    const multiLineStart = contextMenu?.multiLineStart;
+    const multiLineEnd = contextMenu?.multiLineEnd;
 
-    if (!targetSelected || start === undefined || end === undefined) return;
+    if (!targetSelected) return;
+
+    // Multi-line selection handling
+    if (multiLineStart !== undefined && multiLineEnd !== undefined) {
+      if (action === "convert_to_checkbox") {
+        const lines = currentContent.split("\n");
+        for (let i = multiLineStart; i <= multiLineEnd; i++) {
+          const raw = lines[i];
+          const clean = raw.replace(/^(\s*-\s*\[([ xX])?\]\s*|#+\s*|>\s*💡?\s*|-\s*)/, "");
+          lines[i] = `- [ ] ${clean}`;
+        }
+        const newFull = lines.join("\n");
+        if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+        pushHistorySnapshot(currentContent);
+        pushHistorySnapshot(newFull);
+        setCurrentContent(newFull);
+        latestContentRef.current = newFull;
+        scheduleAutoSave();
+        setContextMenu(null);
+        setSelectedLineRange(null);
+        toast.success(`Converted ${multiLineEnd - multiLineStart + 1} lines to Checkboxes!`);
+        return;
+      }
+
+      if (action === "execute_task") {
+        setContextMenu(null);
+        setBubbleToolbar(null);
+        handleExecuteTaskWithAi(targetSelected, multiLineStart);
+        return;
+      }
+
+      setIsAiProcessingSelection(true);
+      setActiveAiAction(action);
+
+      try {
+        const res = await fetch("/api/ai", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action,
+            text: targetSelected,
+            context: `Selection in Note: "${currentTitle}"`,
+          }),
+        });
+
+        const data = await res.json();
+        if (res.ok && data.result) {
+          const lines = currentContent.split("\n");
+          const newLines = data.result.split("\n");
+          lines.splice(multiLineStart, multiLineEnd - multiLineStart + 1, ...newLines);
+          const newFull = lines.join("\n");
+
+          if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+          pushHistorySnapshot(currentContent);
+          pushHistorySnapshot(newFull);
+          setCurrentContent(newFull);
+          latestContentRef.current = newFull;
+          scheduleAutoSave();
+
+          toast.success(`Selected lines updated with AI!`, {
+            action: {
+              label: "Undo (Ctrl+Z)",
+              onClick: () => handleUndo(),
+            },
+            duration: 5000,
+          });
+
+          setContextMenu(null);
+          setSelectedLineRange(null);
+        } else {
+          toast.error(data.error || "Gemini AI processing failed");
+        }
+      } catch (err) {
+        toast.error("Failed to process selection with AI");
+      } finally {
+        setIsAiProcessingSelection(false);
+        setActiveAiAction(null);
+      }
+      return;
+    }
+
+    // Single line / Markdown selection handling
+    if (action === "convert_to_checkbox") {
+      if (lineIdx !== undefined && lineIdx >= 0) {
+        const lines = currentContent.split("\n");
+        if (lineIdx < lines.length) {
+          lines[lineIdx] = `- [ ] ${targetSelected}`;
+          const newFull = lines.join("\n");
+
+          if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+          pushHistorySnapshot(currentContent);
+          pushHistorySnapshot(newFull);
+
+          setCurrentContent(newFull);
+          latestContentRef.current = newFull;
+          scheduleAutoSave();
+          setContextMenu(null);
+          setBubbleToolbar(null);
+          toast.success("Converted line to Task Checkbox!");
+          return;
+        }
+      } else {
+        const formatted = `- [ ] ${targetSelected}`;
+        const before = currentContent.substring(0, start ?? 0);
+        const after = currentContent.substring(end ?? currentContent.length);
+        const newFull = before + formatted + after;
+
+        if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+        pushHistorySnapshot(currentContent);
+        pushHistorySnapshot(newFull);
+
+        setCurrentContent(newFull);
+        latestContentRef.current = newFull;
+        scheduleAutoSave();
+        setContextMenu(null);
+        setBubbleToolbar(null);
+        toast.success("Converted selection to Task Checkbox!");
+        return;
+      }
+    }
+
+    // Special quick action: Generate AI Task Deliverable
+    if (action === "execute_task") {
+      setContextMenu(null);
+      setBubbleToolbar(null);
+      handleExecuteTaskWithAi(targetSelected, lineIdx);
+      return;
+    }
 
     setIsAiProcessingSelection(true);
     setActiveAiAction(action);
@@ -971,20 +1536,56 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
       const data = await res.json();
       if (res.ok && data.result) {
         const replacementText = data.result;
-        const before = currentContent.substring(0, start);
-        const after = currentContent.substring(end);
-        const newFullContent = before + replacementText + after;
 
-        if (typingTimerRef.current) {
-          clearTimeout(typingTimerRef.current);
-          typingTimerRef.current = null;
+        if (lineIdx !== undefined && lineIdx >= 0) {
+          // Interactive line update
+          const lines = currentContent.split("\n");
+          if (lineIdx < lines.length) {
+            const rawLine = lines[lineIdx];
+            let innerText = rawLine;
+            if (lineType === "h1") innerText = rawLine.replace(/^#\s*/, "");
+            else if (lineType === "h2") innerText = rawLine.replace(/^##\s*/, "");
+            else if (lineType === "h3") innerText = rawLine.replace(/^###\s*/, "");
+            else if (lineType === "task") innerText = rawLine.replace(/^(\s*)-\s*\[([ xX])?\]\s*|^\s*\/--checkbox\s*|\s*--\/$/gi, "");
+            else if (lineType === "bullet") innerText = rawLine.replace(/^(\s*)([-*•])\s+/, "");
+            else if (lineType === "callout") innerText = rawLine.replace(/^>\s*💡?\s*|>\s*🤖?\s*|>\s*⚠️?\s*|>\s*📌?\s*/, "");
+            else if (lineType === "quote") innerText = rawLine.replace(/^>\s*/, "");
+
+            let newInnerText = replacementText;
+            if (start !== undefined && end !== undefined && (start > 0 || end < innerText.length)) {
+              newInnerText = innerText.substring(0, start) + replacementText + innerText.substring(end);
+            }
+
+            updateLineContent(lineIdx, newInnerText, lineType || "paragraph", isChecked);
+
+            setTimeout(() => {
+              lineInputRefs.current[lineIdx]?.focus();
+            }, 50);
+          }
+        } else {
+          // Markdown full document replacement
+          const before = currentContent.substring(0, start ?? 0);
+          const after = currentContent.substring(end ?? currentContent.length);
+          const newFullContent = before + replacementText + after;
+
+          if (typingTimerRef.current) {
+            clearTimeout(typingTimerRef.current);
+            typingTimerRef.current = null;
+          }
+          pushHistorySnapshot(currentContent);
+          pushHistorySnapshot(newFullContent);
+
+          setCurrentContent(newFullContent);
+          latestContentRef.current = newFullContent;
+          scheduleAutoSave();
+
+          setTimeout(() => {
+            if (textareaRef.current) {
+              textareaRef.current.focus();
+              textareaRef.current.setSelectionRange(start ?? 0, (start ?? 0) + replacementText.length);
+            }
+          }, 50);
         }
-        pushHistorySnapshot(currentContent);
-        pushHistorySnapshot(newFullContent);
-
-        setCurrentContent(newFullContent);
-        latestContentRef.current = newFullContent;
-        scheduleAutoSave();
 
         toast.success(`Selected text updated with AI!`, {
           action: {
@@ -996,13 +1597,6 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
 
         setContextMenu(null);
         setBubbleToolbar(null);
-
-        setTimeout(() => {
-          if (textareaRef.current) {
-            textareaRef.current.focus();
-            textareaRef.current.setSelectionRange(start, start + replacementText.length);
-          }
-        }, 50);
       } else {
         toast.error(data.error || "Gemini AI processing failed");
       }
@@ -1014,7 +1608,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
     }
   };
 
-  // Toggle Interactive Checkbox item (in both Preview and Editor)
+  // Toggle Interactive Checkbox item directly in the notepad document
   const toggleCheckbox = (lineIndex: number) => {
     const lines = currentContent.split("\n");
     if (lineIndex < 0 || lineIndex >= lines.length) return;
@@ -1026,8 +1620,12 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
       lines[lineIndex] = line.replace("- [x]", "- [ ]");
     } else if (line.includes("- [X]")) {
       lines[lineIndex] = line.replace("- [X]", "- [ ]");
+    } else if (line.match(/^\s*\/--checkbox\s*(.*?)(?:\s*--\/)?$/i)) {
+      const customMatch = line.match(/^\s*\/--checkbox\s*(.*?)(?:\s*--\/)?$/i);
+      const text = customMatch ? customMatch[1].trim() : "";
+      lines[lineIndex] = `- [x] ${text}`;
     } else {
-      return;
+      lines[lineIndex] = `- [x] ${line.replace(/^(\s*[-*•\d.]*\s*)/, "")}`;
     }
 
     const newFull = lines.join("\n");
@@ -1038,6 +1636,428 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
     setCurrentContent(newFull);
     latestContentRef.current = newFull;
     scheduleAutoSave();
+  };
+
+  // Update line text in Interactive Document mode
+  const updateLineContent = (lineIndex: number, newText: string, lineType: string, isChecked?: boolean) => {
+    const lines = currentContent.split("\n");
+    if (lineIndex < 0 || lineIndex >= lines.length) return;
+
+    if (lineType === "task") {
+      let cleanText = newText;
+      if (cleanText.includes("/--checkbox") && cleanText.includes("--/")) {
+        cleanText = cleanText.replace(/\/--checkbox\s*(.*?)\s*--\//gi, "$1");
+      }
+      lines[lineIndex] = `- [${isChecked ? "x" : " "}] ${cleanText}`;
+    } else if (lineType === "h1") {
+      lines[lineIndex] = `# ${newText}`;
+    } else if (lineType === "h2") {
+      lines[lineIndex] = `## ${newText}`;
+    } else if (lineType === "h3") {
+      lines[lineIndex] = `### ${newText}`;
+    } else if (lineType === "bullet") {
+      lines[lineIndex] = `- ${newText}`;
+    } else if (lineType === "callout") {
+      lines[lineIndex] = `> 💡 ${newText}`;
+    } else if (lineType === "quote") {
+      lines[lineIndex] = `> ${newText}`;
+    } else {
+      // Paragraph: check if user typed shortcut prefix
+      if (
+        newText.startsWith("/--checkbox") ||
+        newText.startsWith("/checkbox") ||
+        newText.startsWith("/task") ||
+        newText.startsWith("- [ ]") ||
+        newText.startsWith("[]")
+      ) {
+        const cleanTask = newText
+          .replace(/^\s*(?:\/--checkbox|\/checkbox|\/task|- \[ \]|\[\])\s*/i, "")
+          .replace(/\s*--\/$/, "");
+        lines[lineIndex] = `- [ ] ${cleanTask}`;
+      } else {
+        lines[lineIndex] = newText;
+      }
+    }
+
+    const newFull = lines.join("\n");
+    setCurrentContent(newFull);
+    latestContentRef.current = newFull;
+    scheduleAutoSave();
+
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    typingTimerRef.current = setTimeout(() => {
+      pushHistorySnapshot(newFull);
+    }, 600);
+  };
+
+  // Insert a new line directly after a line in the document and focus it
+  const insertLineAfter = (lineIndex: number, type: "task" | "paragraph" = "task", initialText = "") => {
+    const lines = currentContent.split("\n");
+    const newLineContent = type === "task" ? `- [ ] ${initialText}` : initialText;
+    lines.splice(lineIndex + 1, 0, newLineContent);
+
+    const newFull = lines.join("\n");
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    pushHistorySnapshot(currentContent);
+    pushHistorySnapshot(newFull);
+
+    setCurrentContent(newFull);
+    latestContentRef.current = newFull;
+    scheduleAutoSave();
+
+    setPendingFocus({ lineIdx: lineIndex + 1, cursorPos: initialText.length });
+  };
+
+  // Handle Enter Key on a specific line in Interactive Mode (splits line and focuses next line)
+  const handleEnterOnLine = (
+    lineIndex: number,
+    lineType: "task" | "bullet" | "h1" | "h2" | "h3" | "callout" | "quote" | "paragraph",
+    currentText: string,
+    cursorPos: number,
+    isChecked?: boolean
+  ) => {
+    const beforeCursor = currentText.slice(0, cursorPos);
+    const afterCursor = currentText.slice(cursorPos);
+    const lines = currentContent.split("\n");
+
+    if (lineType === "task") {
+      if (currentText.trim() === "") {
+        lines[lineIndex] = "";
+        const newFull = lines.join("\n");
+        if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+        pushHistorySnapshot(currentContent);
+        pushHistorySnapshot(newFull);
+        setCurrentContent(newFull);
+        latestContentRef.current = newFull;
+        scheduleAutoSave();
+        setPendingFocus({ lineIdx: lineIndex, cursorPos: 0 });
+        return;
+      }
+
+      lines[lineIndex] = `- [${isChecked ? "x" : " "}] ${beforeCursor}`;
+      lines.splice(lineIndex + 1, 0, `- [ ] ${afterCursor}`);
+    } else if (lineType === "bullet") {
+      if (currentText.trim() === "") {
+        lines[lineIndex] = "";
+        const newFull = lines.join("\n");
+        if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+        pushHistorySnapshot(currentContent);
+        pushHistorySnapshot(newFull);
+        setCurrentContent(newFull);
+        latestContentRef.current = newFull;
+        scheduleAutoSave();
+        setPendingFocus({ lineIdx: lineIndex, cursorPos: 0 });
+        return;
+      }
+      lines[lineIndex] = `- ${beforeCursor}`;
+      lines.splice(lineIndex + 1, 0, `- ${afterCursor}`);
+    } else if (lineType === "h1") {
+      lines[lineIndex] = `# ${beforeCursor}`;
+      lines.splice(lineIndex + 1, 0, afterCursor);
+    } else if (lineType === "h2") {
+      lines[lineIndex] = `## ${beforeCursor}`;
+      lines.splice(lineIndex + 1, 0, afterCursor);
+    } else if (lineType === "h3") {
+      lines[lineIndex] = `### ${beforeCursor}`;
+      lines.splice(lineIndex + 1, 0, afterCursor);
+    } else if (lineType === "callout") {
+      lines[lineIndex] = `> 💡 ${beforeCursor}`;
+      lines.splice(lineIndex + 1, 0, afterCursor);
+    } else if (lineType === "quote") {
+      lines[lineIndex] = `> ${beforeCursor}`;
+      lines.splice(lineIndex + 1, 0, afterCursor);
+    } else {
+      lines[lineIndex] = beforeCursor;
+      lines.splice(lineIndex + 1, 0, afterCursor);
+    }
+
+    const newFull = lines.join("\n");
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    pushHistorySnapshot(currentContent);
+    pushHistorySnapshot(newFull);
+
+    setCurrentContent(newFull);
+    latestContentRef.current = newFull;
+    scheduleAutoSave();
+
+    setPendingFocus({ lineIdx: lineIndex + 1, cursorPos: 0 });
+  };
+
+  // Handle Backspace on a specific line when empty (merges with previous line and focuses)
+  const handleBackspaceOnLine = (lineIndex: number, currentText: string) => {
+    if (currentText === "" && lineIndex > 0) {
+      const lines = currentContent.split("\n");
+      const prevLine = lines[lineIndex - 1];
+      const prevLineLength = prevLine.replace(/^(\s*-\s*\[([ xX])?\]\s*|#+\s*|>\s*💡?\s*|-\s*)/, "").length;
+      lines.splice(lineIndex, 1);
+
+      const newFull = lines.join("\n");
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      pushHistorySnapshot(currentContent);
+      pushHistorySnapshot(newFull);
+
+      setCurrentContent(newFull);
+      latestContentRef.current = newFull;
+      scheduleAutoSave();
+
+      setPendingFocus({ lineIdx: lineIndex - 1, cursorPos: prevLineLength });
+    }
+  };
+
+  // Remove or convert empty line on Backspace
+  const removeOrConvertLine = (lineIndex: number) => {
+    const lines = currentContent.split("\n");
+    if (lineIndex < 0 || lineIndex >= lines.length) return;
+
+    if (lines.length > 1) {
+      lines.splice(lineIndex, 1);
+    } else {
+      lines[0] = "";
+    }
+
+    const newFull = lines.join("\n");
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    pushHistorySnapshot(currentContent);
+    pushHistorySnapshot(newFull);
+
+    setCurrentContent(newFull);
+    latestContentRef.current = newFull;
+    scheduleAutoSave();
+
+    if (lineIndex > 0) {
+      setPendingFocus({ lineIdx: lineIndex - 1, cursorPos: 0 });
+    }
+  };
+
+  // Apply AI Text Transformation directly to Checkbox Task Label (Grammar, Hinglish -> English, Professional, etc.)
+  const handleApplyAiToTaskLabel = async (action: string, taskText: string, lineIndex: number) => {
+    if (!taskText || !taskText.trim()) {
+      toast.error("Task description is empty!");
+      return;
+    }
+
+    setTaskAiLoadingIdx(lineIndex);
+    setActiveTaskAiMenu(null);
+
+    try {
+      const res = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action,
+          text: taskText.trim(),
+          context: `Note Title: "${currentTitle}"\nContext: Checkbox task label in project note`,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.result) {
+        const cleanedResult = data.result
+          .replace(/^[-*•\s]+/, "")
+          .replace(/^\[[ xX]?\]\s*/, "")
+          .trim();
+
+        updateLineContent(lineIndex, cleanedResult, "task");
+        toast.success(`AI updated task label!`, {
+          action: {
+            label: "Undo (Ctrl+Z)",
+            onClick: () => handleUndo(),
+          },
+          duration: 4000,
+        });
+      } else {
+        toast.error(data.error || "AI processing failed");
+      }
+    } catch (err) {
+      toast.error("Failed to connect to AI assistant");
+    } finally {
+      setTaskAiLoadingIdx(null);
+    }
+  };
+
+  // Execute Task with Gemini AI (e.g. create email template, documentation, steps)
+  const handleExecuteTaskWithAi = async (taskTitle: string, lineIndex?: number) => {
+    if (!taskTitle || !taskTitle.trim()) {
+      toast.error("Task title is empty!");
+      return;
+    }
+
+    setTaskDeliverableModal({
+      isOpen: true,
+      taskTitle: taskTitle.trim(),
+      lineIndex,
+      deliverable: "",
+      isLoading: true,
+    });
+    setExecutingTaskTitle(taskTitle.trim());
+    if (lineIndex !== undefined) setExecutingLineIndex(lineIndex);
+
+    try {
+      const res = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "execute_task",
+          text: taskTitle.trim(),
+          context: `Note Title: "${currentTitle}"\nFull Note Content:\n${currentContent}`,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.result) {
+        setTaskDeliverableModal((prev) => ({
+          ...prev,
+          deliverable: data.result,
+          isLoading: false,
+        }));
+        toast.success(`AI deliverable generated for "${taskTitle}"!`);
+      } else {
+        toast.error(data.error || "Failed to execute task with AI");
+        setTaskDeliverableModal((prev) => ({ ...prev, isLoading: false }));
+      }
+    } catch (err) {
+      toast.error("Failed to connect to AI assistant");
+      setTaskDeliverableModal((prev) => ({ ...prev, isLoading: false }));
+    } finally {
+      setExecutingTaskTitle(null);
+      setExecutingLineIndex(null);
+    }
+  };
+
+  // Insert AI Task Deliverable directly below task line in the note
+  const handleInsertDeliverableBelowTask = () => {
+    const { deliverable, lineIndex, taskTitle } = taskDeliverableModal;
+    if (!deliverable) return;
+
+    let newFullContent = "";
+    if (lineIndex !== undefined && lineIndex >= 0) {
+      const lines = currentContent.split("\n");
+      const beforeLines = lines.slice(0, lineIndex + 1);
+      const afterLines = lines.slice(lineIndex + 1);
+
+      const deliverableFormatted = `\n> 🤖 **AI Deliverable (${taskTitle}):**\n${deliverable
+        .split("\n")
+        .map((l) => `> ${l}`)
+        .join("\n")}\n`;
+
+      newFullContent = [...beforeLines, deliverableFormatted, ...afterLines].join("\n");
+    } else {
+      newFullContent = `${currentContent}\n\n### 🤖 AI Deliverable: ${taskTitle}\n\n${deliverable}\n`;
+    }
+
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    pushHistorySnapshot(currentContent);
+    pushHistorySnapshot(newFullContent);
+
+    setCurrentContent(newFullContent);
+    latestContentRef.current = newFullContent;
+    scheduleAutoSave();
+    setTaskDeliverableModal((prev) => ({ ...prev, isOpen: false }));
+    toast.success("Deliverable inserted below task into note!");
+  };
+
+  // Sync single task to project workspace tasks
+  const handleSyncTaskToWorkspace = async (taskTitle: string) => {
+    if (!taskTitle || !taskTitle.trim()) return;
+    try {
+      const res = await fetch(`/api/projects/${projectId}/tasks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: taskTitle.trim(),
+          description: `From Note: "${currentTitle}"`,
+          priority: "HIGH",
+          status: "PENDING",
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (onTasksChange && tasks && data.task) {
+          onTasksChange([data.task, ...tasks]);
+        }
+        toast.success(`Task "${taskTitle}" synced to Project Tasks board!`, {
+          action: onNavigateToTab
+            ? {
+              label: "View Tasks",
+              onClick: () => onNavigateToTab("tasks"),
+            }
+            : undefined,
+        });
+      } else {
+        toast.error("Failed to sync task to workspace");
+      }
+    } catch (err) {
+      toast.error("Error syncing task");
+    }
+  };
+
+  // Insert Task Checkbox template at current cursor line or append
+  const handleInsertCheckbox = (presetText?: string) => {
+    if (viewMode === "interactive") {
+      const lines = currentContent ? currentContent.split("\n") : [""];
+      const targetIdx = Math.max(0, Math.min(activeInteractiveLineRef.current.lineIdx, lines.length - 1));
+      const currentLine = lines[targetIdx] ?? "";
+      const isAlreadyTask = currentLine.match(/^(\s*)-\s*\[([ xX])?\]\s*(.*)$/);
+
+      let targetFocusIdx = targetIdx;
+      let targetFocusCursor = (presetText || "").length;
+
+      if (currentLine.trim() === "") {
+        // Current active line is empty: replace with checkbox
+        lines[targetIdx] = presetText !== undefined ? `- [ ] ${presetText}` : "- [ ] ";
+        targetFocusIdx = targetIdx;
+      } else if (isAlreadyTask) {
+        // Current active line is already a checkbox: insert new checkbox on the line directly below
+        lines.splice(targetIdx + 1, 0, presetText !== undefined ? `- [ ] ${presetText}` : "- [ ] ");
+        targetFocusIdx = targetIdx + 1;
+      } else if (presetText !== undefined) {
+        // Preset (e.g. Email task): insert new task line right below
+        lines.splice(targetIdx + 1, 0, `- [ ] ${presetText}`);
+        targetFocusIdx = targetIdx + 1;
+      } else {
+        // Convert current line to a task checkbox in-place
+        lines[targetIdx] = `- [ ] ${currentLine}`;
+        targetFocusIdx = targetIdx;
+        targetFocusCursor = currentLine.length;
+      }
+
+      const newFull = lines.join("\n");
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      pushHistorySnapshot(currentContent);
+      pushHistorySnapshot(newFull);
+
+      setCurrentContent(newFull);
+      latestContentRef.current = newFull;
+      scheduleAutoSave();
+
+      setPendingFocus({ lineIdx: targetFocusIdx, cursorPos: targetFocusCursor });
+      activeInteractiveLineRef.current = { lineIdx: targetFocusIdx, cursorPos: targetFocusCursor };
+      toast.success("Task checkbox added at cursor!");
+      return;
+    }
+
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const formatted = presetText !== undefined ? `- [ ] ${presetText}\n` : "- [ ] ";
+
+    const newContent = currentContent.substring(0, start) + formatted + currentContent.substring(end);
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    pushHistorySnapshot(currentContent);
+    pushHistorySnapshot(newContent);
+
+    setCurrentContent(newContent);
+    latestContentRef.current = newContent;
+    scheduleAutoSave();
+
+    setTimeout(() => {
+      textarea.focus();
+      const newPos = start + formatted.length;
+      textarea.setSelectionRange(newPos, newPos);
+    }, 10);
   };
 
   const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1065,7 +2085,8 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
       latestTitleRef.current,
       latestContentRef.current,
       latestTagsRef.current,
-      newPinned
+      newPinned,
+      latestDescriptionRef.current
     );
     toast.success(newPinned ? "Note pinned to top" : "Note unpinned");
   };
@@ -1078,7 +2099,8 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
       latestTitleRef.current,
       latestContentRef.current,
       latestTagsRef.current,
-      latestPinnedRef.current
+      latestPinnedRef.current,
+      latestDescriptionRef.current
     );
     toast.success("Note saved to database!");
   };
@@ -1094,7 +2116,8 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
         latestTitleRef.current,
         latestContentRef.current,
         latestTagsRef.current,
-        latestPinnedRef.current
+        latestPinnedRef.current,
+        latestDescriptionRef.current
       );
     }
     setActiveNoteId(noteId);
@@ -1102,13 +2125,15 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
   };
 
   const handleCreateNote = async () => {
+    if (isCreatingNote) return;
+    setIsCreatingNote(true);
     try {
       const res = await fetch(`/api/projects/${projectId}/notes`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: "New Note",
-          content: "# New Note\n\nStart typing here... Tip: Type `/` for slash commands or `- ` for instant bullet points!",
+          content: "# New Note",
           tags: "General",
         }),
       });
@@ -1119,10 +2144,14 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
         lastLoadedNoteIdRef.current = null;
         setActiveNoteId(data.note.id);
         setMobileView("editor");
-        toast.success("New note created");
+        toast.success("New note created!");
+      } else {
+        toast.error("Failed to create note");
       }
     } catch (err) {
       toast.error("Failed to create note");
+    } finally {
+      setIsCreatingNote(false);
     }
   };
 
@@ -1170,139 +2199,718 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
     toast.success("Note downloaded");
   };
 
-  const filteredNotes = notes.filter(
-    (n) =>
-      n.title.toLowerCase().includes(searchNotes.toLowerCase()) ||
-      n.content.toLowerCase().includes(searchNotes.toLowerCase()) ||
-      (n.tags && n.tags.toLowerCase().includes(searchNotes.toLowerCase()))
-  );
+  const filteredNotes = React.useMemo(() => {
+    return [...notes]
+      .filter(
+        (n) =>
+          n.title.toLowerCase().includes(searchNotes.toLowerCase()) ||
+          n.content.toLowerCase().includes(searchNotes.toLowerCase()) ||
+          (n.tags && n.tags.toLowerCase().includes(searchNotes.toLowerCase()))
+      )
+      .sort((a, b) => {
+        // Pinned notes always come first
+        if (a.isPinned && !b.isPinned) return -1;
+        if (!a.isPinned && b.isPinned) return 1;
+
+        // Within same pin status, sort by newest updated/created date
+        const timeA = new Date(a.updatedAt || a.createdAt || 0).getTime();
+        const timeB = new Date(b.updatedAt || b.createdAt || 0).getTime();
+        return timeB - timeA;
+      });
+  }, [notes, searchNotes]);
 
   const wordCount = currentContent.trim() ? currentContent.trim().split(/\s+/).length : 0;
   const charCount = currentContent.length;
   const readTimeMin = Math.max(1, Math.ceil(wordCount / 200));
 
-  // Render Rich Markdown Preview with Clickable Tasks & Callout cards
-  const renderRichPreview = () => {
-    const lines = currentContent.split("\n");
+  // Render Interactive Document directly inside Notepad Canvas (Rich Editable Lines with Live Checkboxes)
+  const renderInteractiveDocument = () => {
+    const rawLines = currentContent.split("\n");
+
+    const handleLineMouseDown = (idx: number, e: React.MouseEvent) => {
+      if (e.button !== 0) return; // Only primary left-click
+      if (e.shiftKey) {
+        e.preventDefault();
+        const anchor = activeInteractiveLineRef.current.lineIdx ?? 0;
+        const start = Math.min(anchor, idx);
+        const end = Math.max(anchor, idx);
+        setSelectedLineRange({ start, end });
+        return;
+      }
+      isMouseDownSelectingRef.current = true;
+      selectionStartLineRef.current = idx;
+      if (selectedLineRange) {
+        setSelectedLineRange(null);
+      }
+    };
+
+    const handleLineMouseEnter = (idx: number) => {
+      if (isMouseDownSelectingRef.current && selectionStartLineRef.current !== null) {
+        if (selectionStartLineRef.current !== idx) {
+          const start = Math.min(selectionStartLineRef.current, idx);
+          const end = Math.max(selectionStartLineRef.current, idx);
+          setSelectedLineRange({ start, end });
+        }
+      }
+    };
+
+    const updateCursorLocation = (
+      idx: number,
+      e: React.SyntheticEvent<HTMLInputElement | HTMLTextAreaElement>
+    ) => {
+      const target = e.currentTarget;
+      activeInteractiveLineRef.current = {
+        lineIdx: idx,
+        cursorPos: target.selectionStart ?? 0,
+      };
+    };
+
+    const handleInteractiveKeyDown = (
+      e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>,
+      idx: number,
+      type: "h1" | "h2" | "h3" | "task" | "bullet" | "callout" | "quote" | "paragraph",
+      content: string,
+      isChecked?: boolean
+    ) => {
+      updateCursorLocation(idx, e);
+
+      const target = e.currentTarget;
+      const isInput = target.tagName.toLowerCase() === "input";
+      const cursorPos = target.selectionStart ?? 0;
+      const selectionEnd = target.selectionEnd ?? 0;
+      const isCollapsed = cursorPos === selectionEnd;
+
+      // 1. Enter key
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        handleEnterOnLine(idx, type, content, cursorPos, isChecked);
+        return;
+      }
+
+      // 2. Backspace key on empty line
+      if (e.key === "Backspace" && content === "" && (rawLines.length > 1 || idx > 0)) {
+        e.preventDefault();
+        handleBackspaceOnLine(idx, content);
+        return;
+      }
+
+      // 3. ArrowUp navigation (move focus to line above)
+      if (e.key === "ArrowUp") {
+        const firstNewline = content.indexOf("\n");
+        const isOnFirstLine = isInput || firstNewline === -1 || cursorPos <= firstNewline;
+
+        if (isOnFirstLine) {
+          let prevIdx = idx - 1;
+          while (prevIdx >= 0 && !lineInputRefs.current[prevIdx]) {
+            prevIdx--;
+          }
+          if (prevIdx >= 0) {
+            const prevEl = lineInputRefs.current[prevIdx];
+            if (prevEl) {
+              e.preventDefault();
+              prevEl.focus();
+              const targetPos = Math.min(cursorPos, prevEl.value.length);
+              try {
+                prevEl.setSelectionRange(targetPos, targetPos);
+              } catch (_) { }
+              activeInteractiveLineRef.current = { lineIdx: prevIdx, cursorPos: targetPos };
+              return;
+            }
+          }
+        }
+      }
+
+      // 4. ArrowDown navigation (move focus to line below)
+      if (e.key === "ArrowDown") {
+        const lastNewline = content.lastIndexOf("\n");
+        const isOnLastLine = isInput || lastNewline === -1 || cursorPos >= lastNewline;
+
+        if (isOnLastLine) {
+          let nextIdx = idx + 1;
+          while (nextIdx < rawLines.length && !lineInputRefs.current[nextIdx]) {
+            nextIdx++;
+          }
+          if (nextIdx < rawLines.length) {
+            const nextEl = lineInputRefs.current[nextIdx];
+            if (nextEl) {
+              e.preventDefault();
+              nextEl.focus();
+              const targetPos = Math.min(cursorPos, nextEl.value.length);
+              try {
+                nextEl.setSelectionRange(targetPos, targetPos);
+              } catch (_) { }
+              activeInteractiveLineRef.current = { lineIdx: nextIdx, cursorPos: targetPos };
+              return;
+            }
+          }
+        }
+      }
+
+      // 5. ArrowLeft at start of line
+      if (e.key === "ArrowLeft" && isCollapsed && cursorPos === 0 && idx > 0) {
+        let prevIdx = idx - 1;
+        while (prevIdx >= 0 && !lineInputRefs.current[prevIdx]) {
+          prevIdx--;
+        }
+        if (prevIdx >= 0) {
+          const prevEl = lineInputRefs.current[prevIdx];
+          if (prevEl) {
+            e.preventDefault();
+            prevEl.focus();
+            const endPos = prevEl.value.length;
+            try {
+              prevEl.setSelectionRange(endPos, endPos);
+            } catch (_) { }
+            activeInteractiveLineRef.current = { lineIdx: prevIdx, cursorPos: endPos };
+            return;
+          }
+        }
+      }
+
+      // 6. ArrowRight at end of line
+      if (e.key === "ArrowRight" && isCollapsed && cursorPos === content.length && idx < rawLines.length - 1) {
+        let nextIdx = idx + 1;
+        while (nextIdx < rawLines.length && !lineInputRefs.current[nextIdx]) {
+          nextIdx++;
+        }
+        if (nextIdx < rawLines.length) {
+          const nextEl = lineInputRefs.current[nextIdx];
+          if (nextEl) {
+            e.preventDefault();
+            nextEl.focus();
+            try {
+              nextEl.setSelectionRange(0, 0);
+            } catch (_) { }
+            activeInteractiveLineRef.current = { lineIdx: nextIdx, cursorPos: 0 };
+            return;
+          }
+        }
+      }
+    };
+
     return (
-      <div className="space-y-2 font-sans text-gray-900 leading-relaxed">
-        {lines.map((line, idx) => {
-          // 1. Heading 1
+      <div className="space-y-0 font-sans text-gray-900 leading-relaxed max-w-full mx-auto py-1 relative">
+        {rawLines.map((line, idx) => {
+          const isSelectedLine = selectedLineRange !== null && idx >= selectedLineRange.start && idx <= selectedLineRange.end;
+
+          // 1. Heading 1 (# ...)
           if (line.startsWith("# ")) {
-            return (
-              <h1 key={idx} className="text-2xl sm:text-3xl font-extrabold text-gray-950 pt-3 pb-1 border-b-2 border-gray-200 mt-2">
-                {line.substring(2)}
-              </h1>
-            );
-          }
-          // 2. Heading 2
-          if (line.startsWith("## ")) {
-            return (
-              <h2 key={idx} className="text-xl sm:text-2xl font-bold text-gray-900 pt-2 pb-0.5 mt-3 text-indigo-950">
-                {line.substring(3)}
-              </h2>
-            );
-          }
-          // 3. Heading 3
-          if (line.startsWith("### ")) {
-            return (
-              <h3 key={idx} className="text-lg font-bold text-gray-800 pt-1 mt-2">
-                {line.substring(4)}
-              </h3>
-            );
-          }
-          // 4. Checkbox Task item
-          if (line.match(/^(\s*)-\s*\[([ xX])?\]\s*(.*)$/)) {
-            const isChecked = line.includes("- [x]") || line.includes("- [X]");
-            const text = line.replace(/^(\s*)-\s*\[([ xX])?\]\s*/, "");
+            const hText = line.substring(2);
             return (
               <div
                 key={idx}
-                onClick={() => toggleCheckbox(idx)}
-                className="flex items-start gap-2.5 py-1 px-1.5 rounded-lg hover:bg-gray-50 transition cursor-pointer select-none group"
+                onMouseDown={(e) => handleLineMouseDown(idx, e)}
+                onMouseEnter={() => handleLineMouseEnter(idx)}
+                className={cn(
+                  "group flex items-center gap-2 pt-2 pb-0.5 border-b border-gray-200 transition-all rounded px-1 -mx-1",
+                  isSelectedLine && "bg-blue-100/70"
+                )}
               >
-                <div
-                  className={cn(
-                    "w-4 h-4 rounded border-2 flex items-center justify-center mt-1 transition-all shrink-0",
-                    isChecked
-                      ? "bg-[#3B82F6] border-[#3B82F6] text-white"
-                      : "border-gray-400 bg-white group-hover:border-[#3B82F6]"
-                  )}
-                >
-                  {isChecked && <Check className="w-3 h-3 stroke-[3]" />}
+                <input
+                  ref={(el) => {
+                    lineInputRefs.current[idx] = el;
+                  }}
+                  type="text"
+                  value={hText}
+                  onContextMenu={(e) => handleContextMenu(e, idx, "h1")}
+                  onFocus={(e) => updateCursorLocation(idx, e)}
+                  onClick={(e) => updateCursorLocation(idx, e)}
+                  onKeyUp={(e) => updateCursorLocation(idx, e)}
+                  onSelect={(e) => updateCursorLocation(idx, e)}
+                  onChange={(e) => {
+                    updateCursorLocation(idx, e);
+                    updateLineContent(idx, e.target.value, "h1");
+                  }}
+                  onKeyDown={(e) => handleInteractiveKeyDown(e, idx, "h1", hText)}
+                  placeholder="Heading 1..."
+                  className="w-full text-2xl sm:text-3xl font-extrabold text-gray-950 bg-transparent border-none outline-none focus:bg-blue-50/50 rounded px-1 -mx-1 py-0 leading-tight"
+                />
+              </div>
+            );
+          }
+
+          // 2. Heading 2 (## ...)
+          if (line.startsWith("## ")) {
+            const hText = line.substring(3);
+            return (
+              <div
+                key={idx}
+                onMouseDown={(e) => handleLineMouseDown(idx, e)}
+                onMouseEnter={() => handleLineMouseEnter(idx)}
+                className={cn(
+                  "group flex items-center gap-2 pt-1.5 pb-0.5 transition-all rounded px-1 -mx-1",
+                  isSelectedLine && "bg-blue-100/70"
+                )}
+              >
+                <input
+                  ref={(el) => {
+                    lineInputRefs.current[idx] = el;
+                  }}
+                  type="text"
+                  value={hText}
+                  onContextMenu={(e) => handleContextMenu(e, idx, "h2")}
+                  onFocus={(e) => updateCursorLocation(idx, e)}
+                  onClick={(e) => updateCursorLocation(idx, e)}
+                  onKeyUp={(e) => updateCursorLocation(idx, e)}
+                  onSelect={(e) => updateCursorLocation(idx, e)}
+                  onChange={(e) => {
+                    updateCursorLocation(idx, e);
+                    updateLineContent(idx, e.target.value, "h2");
+                  }}
+                  onKeyDown={(e) => handleInteractiveKeyDown(e, idx, "h2", hText)}
+                  placeholder="Heading 2..."
+                  className="w-full text-xl sm:text-2xl font-bold text-indigo-950 bg-transparent border-none outline-none focus:bg-blue-50/50 rounded px-1 -mx-1 py-0 leading-snug"
+                />
+              </div>
+            );
+          }
+
+          // 3. Heading 3 (### ...)
+          if (line.startsWith("### ")) {
+            const hText = line.substring(4);
+            return (
+              <div
+                key={idx}
+                onMouseDown={(e) => handleLineMouseDown(idx, e)}
+                onMouseEnter={() => handleLineMouseEnter(idx)}
+                className={cn(
+                  "group flex items-center gap-2 pt-1 pb-0.5 transition-all rounded px-1 -mx-1",
+                  isSelectedLine && "bg-blue-100/70"
+                )}
+              >
+                <input
+                  ref={(el) => {
+                    lineInputRefs.current[idx] = el;
+                  }}
+                  type="text"
+                  value={hText}
+                  onContextMenu={(e) => handleContextMenu(e, idx, "h3")}
+                  onFocus={(e) => updateCursorLocation(idx, e)}
+                  onClick={(e) => updateCursorLocation(idx, e)}
+                  onKeyUp={(e) => updateCursorLocation(idx, e)}
+                  onSelect={(e) => updateCursorLocation(idx, e)}
+                  onChange={(e) => {
+                    updateCursorLocation(idx, e);
+                    updateLineContent(idx, e.target.value, "h3");
+                  }}
+                  onKeyDown={(e) => handleInteractiveKeyDown(e, idx, "h3", hText)}
+                  placeholder="Heading 3..."
+                  className="w-full text-lg font-bold text-gray-800 bg-transparent border-none outline-none focus:bg-blue-50/50 rounded px-1 -mx-1 py-0 leading-snug"
+                />
+              </div>
+            );
+          }
+
+          // 4. Checkbox Task item (- [ ] / - [x] / /--checkbox ... --/)
+          const isStandardTask = line.match(/^(\s*)-\s*\[([ xX])?\]\s*(.*)$/);
+          const isCustomSyntaxTask = line.match(/^\s*\/--checkbox\s*(.*?)(?:\s*--\/)?$/i);
+
+          if (isStandardTask || isCustomSyntaxTask) {
+            const isChecked = line.includes("- [x]") || line.includes("- [X]");
+            const taskText = isStandardTask
+              ? line.replace(/^(\s*)-\s*\[([ xX])?\]\s*/, "")
+              : isCustomSyntaxTask
+                ? isCustomSyntaxTask[1].trim()
+                : "";
+
+            const isThisExecuting = executingLineIndex === idx || executingTaskTitle === taskText;
+            const isEmailTask = taskText.toLowerCase().includes("email") || taskText.toLowerCase().includes("templete") || taskText.toLowerCase().includes("template");
+
+            return (
+              <div
+                key={idx}
+                onMouseDown={(e) => handleLineMouseDown(idx, e)}
+                onMouseEnter={() => handleLineMouseEnter(idx)}
+                className={cn(
+                  "group flex flex-col sm:flex-row sm:items-start justify-between gap-1 sm:gap-2 py-0.5 px-1.5 rounded-md transition border border-transparent",
+                  isChecked ? "bg-gray-50/70" : "hover:bg-blue-50/60 hover:border-blue-200",
+                  isSelectedLine && "bg-blue-100/70"
+                )}
+              >
+                {/* Left: Checkbox + Full Width Multiline Task Label */}
+                <div className="flex items-start gap-2 flex-1 min-w-0 w-full">
+                  <button
+                    type="button"
+                    onClick={() => toggleCheckbox(idx)}
+                    title={isChecked ? "Mark Incomplete" : "Mark Completed"}
+                    className={cn(
+                      "w-4.5 h-4.5 rounded border-2 flex items-center justify-center transition shrink-0 cursor-pointer shadow-xs mt-0.5",
+                      isChecked
+                        ? "bg-[#3B82F6] border-[#3B82F6] text-white"
+                        : "border-gray-400 bg-white hover:border-[#3B82F6] hover:bg-blue-50"
+                    )}
+                  >
+                    {isChecked && <Check className="w-3 h-3 stroke-[3]" />}
+                  </button>
+
+                  <textarea
+                    rows={1}
+                    value={taskText}
+                    ref={(el) => {
+                      lineInputRefs.current[idx] = el;
+                      if (el) {
+                        el.style.height = "auto";
+                        el.style.height = `${el.scrollHeight}px`;
+                      }
+                    }}
+                    onContextMenu={(e) => handleContextMenu(e, idx, "task", isChecked)}
+                    onFocus={(e) => updateCursorLocation(idx, e)}
+                    onClick={(e) => updateCursorLocation(idx, e)}
+                    onKeyUp={(e) => updateCursorLocation(idx, e)}
+                    onSelect={(e) => updateCursorLocation(idx, e)}
+                    onChange={(e) => {
+                      e.target.style.height = "auto";
+                      e.target.style.height = `${e.target.scrollHeight}px`;
+                      updateCursorLocation(idx, e);
+                      updateLineContent(idx, e.target.value, "task", isChecked);
+                    }}
+                    onKeyDown={(e) => handleInteractiveKeyDown(e, idx, "task", taskText, isChecked)}
+                    placeholder="Task description..."
+                    className={cn(
+                      "flex-1 text-sm font-medium bg-transparent border-none outline-none focus:bg-white focus:ring-1 focus:ring-blue-400 rounded px-1 py-0 w-full min-w-0 resize-none overflow-hidden leading-relaxed break-words whitespace-pre-wrap transition-all",
+                      isChecked ? "line-through text-gray-400" : "text-gray-900 font-semibold"
+                    )}
+                  />
                 </div>
-                <span
-                  className={cn(
-                    "text-sm font-medium transition-all",
-                    isChecked ? "line-through text-gray-400" : "text-gray-800"
-                  )}
-                >
-                  {text || <span className="text-gray-300 italic">Empty task</span>}
-                </span>
+
+                {/* Right / Mobile Action Badges */}
+                <div className="relative flex items-center gap-1.5 shrink-0 pl-6 sm:pl-0 self-end sm:self-start sm:mt-0">
+                  <div className="relative inline-block">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActiveTaskAiMenu(activeTaskAiMenu?.lineIdx === idx ? null : { lineIdx: idx, taskText });
+                      }}
+                      disabled={isThisExecuting || taskAiLoadingIdx === idx}
+                      title="AI Tools (Grammar, Hinglish → English, Professional, Deliverables)"
+                      className={cn(
+                        "flex items-center gap-1 px-2 py-0.5 rounded text-[11px] sm:text-xs font-bold transition border cursor-pointer shadow-xs whitespace-nowrap",
+                        isEmailTask
+                          ? "bg-amber-100 hover:bg-amber-200 text-amber-900 border-amber-300"
+                          : "bg-blue-50 hover:bg-blue-100 text-blue-800 border-blue-200"
+                      )}
+                    >
+                      {isThisExecuting || taskAiLoadingIdx === idx ? (
+                        <Loader2 className="w-3 h-3 animate-spin text-amber-600" />
+                      ) : isEmailTask ? (
+                        <Mail className="w-3 h-3 text-amber-700" />
+                      ) : (
+                        <Sparkles className="w-3 h-3 text-blue-600" />
+                      )}
+                      <span>{isEmailTask ? "Draft Email" : "AI Tools"}</span>
+                      <ChevronDown className="w-2.5 h-2.5 opacity-70 ml-0.5" />
+                    </button>
+
+                    {/* AI Task Actions Dropdown Menu */}
+                    {activeTaskAiMenu?.lineIdx === idx && (
+                      <div
+                        onClick={(e) => e.stopPropagation()}
+                        className="absolute right-0 top-full mt-1.5 z-50 w-64 sm:w-72 bg-white rounded-xl border-2 border-gray-200 p-1.5 shadow-xl space-y-1 animate-in fade-in zoom-in-95 duration-100 select-none text-left max-h-[min(340px,calc(100vh-140px))] overflow-y-auto"
+                      >
+                        <div className="px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wider text-gray-400 border-b border-gray-100 flex items-center justify-between">
+                          <span>Task AI Actions</span>
+                          <button
+                            type="button"
+                            onClick={() => setActiveTaskAiMenu(null)}
+                            className="text-gray-400 hover:text-gray-700 p-0.5 cursor-pointer"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+
+                        {[
+                          {
+                            id: "grammar",
+                            label: "Fix Grammar & Spelling",
+                            desc: "English grammar and spelling correction",
+                            icon: CheckCheck,
+                            color: "text-emerald-600 bg-emerald-50",
+                          },
+                          {
+                            id: "hinglish_to_english",
+                            label: "Translate Hinglish → English",
+                            desc: "Convert Hindi/Hinglish into formal English",
+                            icon: Languages,
+                            color: "text-blue-600 bg-blue-50",
+                          },
+                          {
+                            id: "professional",
+                            label: "Company Standard / Professional",
+                            desc: "Formal corporate executive tone",
+                            icon: Briefcase,
+                            color: "text-purple-600 bg-purple-50",
+                          },
+                          {
+                            id: "english_to_simple",
+                            label: "Simplify for Client",
+                            desc: "Clear plain English explanation",
+                            icon: Smile,
+                            color: "text-amber-600 bg-amber-50",
+                          },
+                          {
+                            id: "make_short",
+                            label: "Make Shorter (Short Version)",
+                            desc: "Concise & punchy task text",
+                            icon: Scissors,
+                            color: "text-rose-600 bg-rose-50",
+                          },
+                          {
+                            id: "execute_task",
+                            label: isEmailTask ? "Draft Email Deliverable" : "Generate Task Deliverable",
+                            desc: isEmailTask ? "Full email template with subject & body" : "Draft AI solution or template modal",
+                            icon: isEmailTask ? Mail : Sparkles,
+                            color: "text-amber-700 bg-amber-100",
+                          },
+                        ].map((action) => {
+                          const Icon = action.icon;
+                          return (
+                            <button
+                              key={action.id}
+                              type="button"
+                              onClick={() => {
+                                setActiveTaskAiMenu(null);
+                                if (action.id === "execute_task") {
+                                  handleExecuteTaskWithAi(taskText, idx);
+                                } else {
+                                  handleApplyAiToTaskLabel(action.id, taskText, idx);
+                                }
+                              }}
+                              className="group/item w-full text-left p-1.5 rounded-lg hover:bg-blue-50/80 transition flex items-start gap-2.5 cursor-pointer"
+                            >
+                              <div className={cn("p-1 rounded shrink-0 mt-0.5", action.color)}>
+                                <Icon className="w-3.5 h-3.5" />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="text-xs font-bold text-gray-900 group-hover/item:text-blue-600 leading-tight">
+                                  {action.label}
+                                </div>
+                                <div className="text-[10px] text-gray-400 group-hover/item:text-gray-600 font-medium truncate mt-0.5">
+                                  {action.desc}
+                                </div>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleSyncTaskToWorkspace(taskText)}
+                    title="Sync to Project Tasks board"
+                    className="p-1 rounded bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs transition border border-gray-200 cursor-pointer"
+                  >
+                    <CheckSquare className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
             );
           }
-          // 5. Bullet List
+
+          // 5. Bullet Point (- ...)
           if (line.match(/^(\s*)([-*•])\s+(.*)$/)) {
-            const text = line.replace(/^(\s*)([-*•])\s+/, "");
+            const bText = line.replace(/^(\s*)([-*•])\s+/, "");
             return (
-              <div key={idx} className="flex items-start gap-2.5 pl-2 py-0.5 text-sm text-gray-800">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#3B82F6] mt-2 shrink-0" />
-                <span>{text}</span>
+              <div
+                key={idx}
+                onMouseDown={(e) => handleLineMouseDown(idx, e)}
+                onMouseEnter={() => handleLineMouseEnter(idx)}
+                className={cn(
+                  "group flex items-start gap-2 pl-1 py-0 transition-all rounded px-1 -mx-1",
+                  isSelectedLine && "bg-blue-100/70"
+                )}
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-[#3B82F6] shrink-0 mt-2" />
+                <textarea
+                  rows={1}
+                  value={bText}
+                  ref={(el) => {
+                    lineInputRefs.current[idx] = el;
+                    if (el) {
+                      el.style.height = "auto";
+                      el.style.height = `${el.scrollHeight}px`;
+                    }
+                  }}
+                  onContextMenu={(e) => handleContextMenu(e, idx, "bullet")}
+                  onFocus={(e) => updateCursorLocation(idx, e)}
+                  onClick={(e) => updateCursorLocation(idx, e)}
+                  onKeyUp={(e) => updateCursorLocation(idx, e)}
+                  onSelect={(e) => updateCursorLocation(idx, e)}
+                  onChange={(e) => {
+                    e.target.style.height = "auto";
+                    e.target.style.height = `${e.target.scrollHeight}px`;
+                    updateCursorLocation(idx, e);
+                    updateLineContent(idx, e.target.value, "bullet");
+                  }}
+                  onKeyDown={(e) => handleInteractiveKeyDown(e, idx, "bullet", bText)}
+                  placeholder="Bullet point..."
+                  className="flex-1 text-sm text-gray-800 bg-transparent border-none outline-none focus:bg-blue-50/50 rounded px-1 py-0 resize-none overflow-hidden leading-relaxed break-words whitespace-pre-wrap"
+                />
               </div>
             );
           }
-          // 6. Numbered List
-          if (line.match(/^(\s*)(\d+)\.\s+(.*)$/)) {
-            const match = line.match(/^(\s*)(\d+)\.\s+(.*)$/);
-            const num = match ? match[2] : "1";
-            const text = match ? match[3] : "";
+
+          // 6. Callout Box / Key Note (> 💡 ...)
+          if (line.startsWith("> 💡") || line.startsWith("> 🤖") || line.startsWith("> ⚠️") || line.startsWith("> 📌")) {
+            const cText = line.substring(2);
             return (
-              <div key={idx} className="flex items-start gap-2 pl-2 py-0.5 text-sm text-gray-800">
-                <span className="font-bold text-[#3B82F6] text-xs mt-0.5 shrink-0 min-w-[16px]">{num}.</span>
-                <span>{text}</span>
+              <div
+                key={idx}
+                onMouseDown={(e) => handleLineMouseDown(idx, e)}
+                onMouseEnter={() => handleLineMouseEnter(idx)}
+                className={cn(
+                  "my-1 p-2.5 bg-amber-50/80 border-l-4 border-amber-500 rounded-r-lg transition-all",
+                  isSelectedLine && "bg-blue-100/70"
+                )}
+              >
+                <textarea
+                  rows={1}
+                  value={cText}
+                  ref={(el) => {
+                    lineInputRefs.current[idx] = el;
+                    if (el) {
+                      el.style.height = "auto";
+                      el.style.height = `${el.scrollHeight}px`;
+                    }
+                  }}
+                  onContextMenu={(e) => handleContextMenu(e, idx, "callout")}
+                  onFocus={(e) => updateCursorLocation(idx, e)}
+                  onClick={(e) => updateCursorLocation(idx, e)}
+                  onKeyUp={(e) => updateCursorLocation(idx, e)}
+                  onSelect={(e) => updateCursorLocation(idx, e)}
+                  onChange={(e) => {
+                    e.target.style.height = "auto";
+                    e.target.style.height = `${e.target.scrollHeight}px`;
+                    updateCursorLocation(idx, e);
+                    updateLineContent(idx, e.target.value, "callout");
+                  }}
+                  onKeyDown={(e) => handleInteractiveKeyDown(e, idx, "callout", cText)}
+                  className="w-full text-xs sm:text-sm text-amber-950 font-medium bg-transparent border-none outline-none resize-none overflow-hidden leading-relaxed break-words whitespace-pre-wrap py-0"
+                />
               </div>
             );
           }
-          // 7. Callout Box / Key Note
-          if (line.startsWith("> 💡") || line.startsWith("> ⚠️") || line.startsWith("> 📌")) {
-            return (
-              <div key={idx} className="my-2 p-3.5 bg-amber-50/80 border-l-4 border-amber-500 rounded-r-lg text-sm text-amber-950 font-medium">
-                {line.substring(2)}
-              </div>
-            );
-          }
-          // 8. Standard Blockquote
+
+          // 7. Standard Blockquote (> ...)
           if (line.startsWith("> ")) {
+            const qText = line.substring(2);
             return (
-              <blockquote key={idx} className="my-2 pl-4 py-1 border-l-4 border-gray-300 italic text-gray-600 text-sm">
-                {line.substring(2)}
-              </blockquote>
-            );
-          }
-          // 9. Divider Rule
-          if (line.trim() === "---") {
-            return <hr key={idx} className="my-4 border-t-2 border-gray-200" />;
-          }
-          // 10. Code Block Line
-          if (line.startsWith("```")) {
-            return (
-              <div key={idx} className="text-xs font-mono bg-gray-900 text-emerald-400 px-3 py-1.5 rounded-t-md mt-2">
-                {line}
+              <div
+                key={idx}
+                onMouseDown={(e) => handleLineMouseDown(idx, e)}
+                onMouseEnter={() => handleLineMouseEnter(idx)}
+                className={cn(
+                  "my-0.5 pl-3 py-0.5 border-l-4 border-gray-300 transition-all rounded px-1 -mx-1",
+                  isSelectedLine && "bg-blue-100/70"
+                )}
+              >
+                <textarea
+                  rows={1}
+                  value={qText}
+                  ref={(el) => {
+                    lineInputRefs.current[idx] = el;
+                    if (el) {
+                      el.style.height = "auto";
+                      el.style.height = `${el.scrollHeight}px`;
+                    }
+                  }}
+                  onContextMenu={(e) => handleContextMenu(e, idx, "quote")}
+                  onFocus={(e) => updateCursorLocation(idx, e)}
+                  onClick={(e) => updateCursorLocation(idx, e)}
+                  onKeyUp={(e) => updateCursorLocation(idx, e)}
+                  onSelect={(e) => updateCursorLocation(idx, e)}
+                  onChange={(e) => {
+                    e.target.style.height = "auto";
+                    e.target.style.height = `${e.target.scrollHeight}px`;
+                    updateCursorLocation(idx, e);
+                    updateLineContent(idx, e.target.value, "quote");
+                  }}
+                  onKeyDown={(e) => handleInteractiveKeyDown(e, idx, "quote", qText)}
+                  className="w-full text-sm italic text-gray-600 bg-transparent border-none outline-none resize-none overflow-hidden leading-relaxed break-words whitespace-pre-wrap py-0"
+                />
               </div>
             );
           }
-          // 11. Empty Line
-          if (line.trim() === "") {
-            return <div key={idx} className="h-3" />;
+
+          // 8. Divider Rule (---)
+          if (line.trim() === "---") {
+            return <hr key={idx} className="my-2 border-t-2 border-gray-200" />;
           }
-          // 12. Standard Paragraph
+
+          // 9. Standard Paragraph
           return (
-            <p key={idx} className="text-sm text-gray-800 leading-relaxed">
-              {line}
-            </p>
+            <div
+              key={idx}
+              onMouseDown={(e) => handleLineMouseDown(idx, e)}
+              onMouseEnter={() => handleLineMouseEnter(idx)}
+              className={cn(
+                "group flex items-start gap-1 py-0 transition-all rounded px-1 -mx-1",
+                isSelectedLine && "bg-blue-100/70"
+              )}
+            >
+              <textarea
+                rows={1}
+                value={line}
+                ref={(el) => {
+                  lineInputRefs.current[idx] = el;
+                  if (el) {
+                    el.style.height = "auto";
+                    el.style.height = `${el.scrollHeight}px`;
+                  }
+                }}
+                onContextMenu={(e) => handleContextMenu(e, idx, "paragraph")}
+                onFocus={(e) => updateCursorLocation(idx, e)}
+                onClick={(e) => updateCursorLocation(idx, e)}
+                onKeyUp={(e) => updateCursorLocation(idx, e)}
+                onSelect={(e) => updateCursorLocation(idx, e)}
+                onChange={(e) => {
+                  e.target.style.height = "auto";
+                  e.target.style.height = `${e.target.scrollHeight}px`;
+                  updateCursorLocation(idx, e);
+                  updateLineContent(idx, e.target.value, "paragraph");
+                }}
+                onKeyDown={(e) => handleInteractiveKeyDown(e, idx, "paragraph", line)}
+                placeholder={idx === 0 ? "Type note text or '/--checkbox <task> --/' for a checkbox..." : ""}
+                className="w-full text-sm text-gray-800 bg-transparent border-none outline-none focus:bg-blue-50/40 rounded px-1 -mx-1 py-0 resize-none overflow-hidden leading-relaxed break-words whitespace-pre-wrap"
+              />
+            </div>
           );
         })}
+
+        {/* Quick Document Action Buttons at Bottom */}
+        <div className="pt-3 flex flex-col sm:flex-row items-stretch sm:items-center gap-2 border-t border-gray-100 mt-3">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => handleInsertCheckbox()}
+            className="gap-1.5 text-xs text-blue-700 bg-blue-50 hover:bg-blue-100 border-blue-200 cursor-pointer active:scale-95 transition-all shadow-xs justify-center"
+          >
+            <CheckSquare className="w-3.5 h-3.5" />
+            <span>+ Add Task Checkbox</span>
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => handleInsertCheckbox("create email template for: ")}
+            className="gap-1.5 text-xs text-amber-800 bg-amber-50 hover:bg-amber-100 border-amber-200 cursor-pointer active:scale-95 transition-all shadow-xs justify-center"
+          >
+            <Mail className="w-3.5 h-3.5" />
+            <span>+ Add Email Template Task</span>
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => insertLineAfter(activeInteractiveLineRef.current.lineIdx ?? rawLines.length - 1, "paragraph", "")}
+            className="gap-1.5 text-xs text-gray-700 hover:bg-gray-100 cursor-pointer active:scale-95 transition-all justify-center"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>+ Add Line</span>
+          </Button>
+        </div>
       </div>
     );
   };
@@ -1328,10 +2936,21 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
               variant="primary"
               size="sm"
               onClick={handleCreateNote}
-              className="gap-1 text-xs h-7 px-2"
+              disabled={isCreatingNote}
+              className="gap-1 text-xs h-7 px-2.5 active:scale-95 transition-all shadow-sm cursor-pointer"
+              title="Create a new note"
             >
-              <Plus className="w-3.5 h-3.5" strokeWidth={3} />
-              <span>New Note</span>
+              {isCreatingNote ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Creating...</span>
+                </>
+              ) : (
+                <>
+                  <Plus className="w-3.5 h-3.5" strokeWidth={3} />
+                  <span>New Note</span>
+                </>
+              )}
             </Button>
           </div>
 
@@ -1357,20 +2976,37 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
                 variant="primary"
                 size="sm"
                 onClick={handleCreateNote}
-                className="mt-3 text-xs w-full"
+                disabled={isCreatingNote}
+                className="mt-3 text-xs w-full active:scale-95 transition-all gap-1.5 cursor-pointer"
               >
-                Create Note
+                {isCreatingNote ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Creating Note...</span>
+                  </>
+                ) : (
+                  <>
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Create Note</span>
+                  </>
+                )}
               </Button>
             </div>
           ) : (
             filteredNotes.map((note) => {
               const isSelected = note.id === activeNoteId;
+              const words = countWords(note.content);
+              const hasAiDescription = words >= 15 && Boolean(note.description);
+              const fullNoteSnippet = hasAiDescription
+                ? note.description!
+                : (note.content.replace(/[#*`_>\[\]]/g, "").trim() || "Empty note...");
+
               return (
                 <div
                   key={note.id}
                   onClick={() => handleSelectNote(note.id)}
                   className={cn(
-                    "group p-3.5 rounded-lg cursor-pointer transition-all duration-200 select-none relative",
+                    "group p-3.5 rounded-lg cursor-pointer transition-all duration-150 select-none relative active:scale-[0.98]",
                     isSelected
                       ? "bg-white border-l-4 border-l-[#3B82F6] text-gray-900 shadow-sm"
                       : "bg-white/70 hover:bg-white text-gray-700 hover:scale-[1.01]"
@@ -1395,17 +3031,31 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
                     </button>
                   </div>
 
-                  <p className="text-xs text-gray-500 line-clamp-2 mt-1.5 font-normal">
-                    {note.content.replace(/[#*`_>\[\]]/g, "").slice(0, 90) || "Empty note..."}
+                  <p
+                    title={fullNoteSnippet}
+                    className="text-xs text-gray-500 line-clamp-3 mt-1.5 font-normal leading-relaxed break-words"
+                  >
+                    {fullNoteSnippet}
                   </p>
 
-                  <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-gray-100 text-[10px] text-gray-400 font-medium">
-                    <span>{formatDate(note.updatedAt)}</span>
-                    {note.tags && (
-                      <span className="truncate max-w-[120px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-semibold">
-                        {note.tags}
-                      </span>
-                    )}
+                  <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-gray-100 text-[11px] text-gray-400 font-medium">
+                    <span className="font-semibold text-gray-500">{formatDate(note.createdAt || note.updatedAt)}</span>
+                    <div className="flex items-center gap-1">
+                      {hasAiDescription && (
+                        <span
+                          title="AI generated note summary"
+                          className="inline-flex items-center gap-0.5 text-[9px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200/60"
+                        >
+                          <Sparkles className="w-2.5 h-2.5" />
+                          <span>AI</span>
+                        </span>
+                      )}
+                      {note.tags && (
+                        <span className="truncate max-w-[100px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-semibold text-[10px]">
+                          {note.tags}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
               );
@@ -1608,7 +3258,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
                 type="button"
                 onClick={handleUndo}
                 disabled={historyIndex <= 0}
-                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 disabled:opacity-30 disabled:hover:bg-transparent transition"
+                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 disabled:opacity-30 disabled:hover:bg-transparent transition cursor-pointer"
                 title="Undo (Ctrl+Z)"
               >
                 <Undo2 className="w-4 h-4" />
@@ -1617,7 +3267,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
                 type="button"
                 onClick={handleRedo}
                 disabled={historyIndex >= history.length - 1}
-                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 disabled:opacity-30 disabled:hover:bg-transparent transition"
+                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 disabled:opacity-30 disabled:hover:bg-transparent transition cursor-pointer"
                 title="Redo (Ctrl+Y)"
               >
                 <Redo2 className="w-4 h-4" />
@@ -1629,7 +3279,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
               <button
                 type="button"
                 onClick={() => applyFormatting("**", "**")}
-                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 transition font-bold"
+                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 transition font-bold cursor-pointer"
                 title="Bold (Ctrl+B)"
               >
                 <Bold className="w-4 h-4" />
@@ -1637,7 +3287,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
               <button
                 type="button"
                 onClick={() => applyFormatting("*", "*")}
-                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 transition italic"
+                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 transition italic cursor-pointer"
                 title="Italic (Ctrl+I)"
               >
                 <Italic className="w-4 h-4" />
@@ -1645,7 +3295,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
               <button
                 type="button"
                 onClick={() => applyFormatting("~~", "~~")}
-                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 transition"
+                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 transition cursor-pointer"
                 title="Strikethrough (Ctrl+Shift+X)"
               >
                 <Strikethrough className="w-4 h-4" />
@@ -1653,7 +3303,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
               <button
                 type="button"
                 onClick={() => applyFormatting("==", "==")}
-                className="p-1.5 rounded hover:bg-gray-200 text-amber-600 transition"
+                className="p-1.5 rounded hover:bg-gray-200 text-amber-600 transition cursor-pointer"
                 title="Highlight Marker"
               >
                 <Highlighter className="w-4 h-4" />
@@ -1665,7 +3315,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
               <button
                 type="button"
                 onClick={() => applyFormatting("# ", "")}
-                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 transition"
+                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 transition cursor-pointer"
                 title="Heading 1 (#)"
               >
                 <Heading1 className="w-4 h-4" />
@@ -1673,7 +3323,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
               <button
                 type="button"
                 onClick={() => applyFormatting("## ", "")}
-                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 transition"
+                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 transition cursor-pointer"
                 title="Heading 2 (##)"
               >
                 <Heading2 className="w-4 h-4" />
@@ -1681,7 +3331,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
               <button
                 type="button"
                 onClick={() => applyFormatting("### ", "")}
-                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 transition"
+                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 transition cursor-pointer"
                 title="Heading 3 (###)"
               >
                 <Heading3 className="w-4 h-4" />
@@ -1693,35 +3343,28 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
               <button
                 type="button"
                 onClick={() => applyFormatting("- ", "")}
-                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 transition"
+                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 transition cursor-pointer"
                 title="Bullet List (-)"
               >
                 <List className="w-4 h-4" />
               </button>
               <button
                 type="button"
-                onClick={() => applyFormatting("1. ", "")}
-                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 transition"
-                title="Numbered List (1.)"
-              >
-                <ListOrdered className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() => applyFormatting("- [ ] ", "")}
-                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 transition"
-                title="Task Checklist (- [ ])"
+                onClick={() => handleInsertCheckbox()}
+                className="p-1.5 rounded hover:bg-blue-100 text-[#3B82F6] font-bold transition flex items-center gap-1 cursor-pointer bg-blue-50 shrink-0"
+                title="Task Checkbox in Notepad (- [ ] or /--checkbox)"
               >
                 <CheckSquare className="w-4 h-4 text-[#3B82F6]" />
+                <span className="text-[11px] whitespace-nowrap">Checkbox</span>
               </button>
 
-              <div className="w-px h-4 bg-gray-300 mx-0.5 sm:mx-1" />
+              <div className="w-px h-4 bg-gray-300 mx-0.5 sm:mx-1 shrink-0" />
 
               {/* Blocks */}
               <button
                 type="button"
                 onClick={() => applyFormatting("> 💡 **Note:** ", "")}
-                className="p-1.5 rounded hover:bg-gray-200 text-amber-600 transition"
+                className="p-1.5 rounded hover:bg-gray-200 text-amber-600 transition cursor-pointer shrink-0"
                 title="Callout Box"
               >
                 <Lightbulb className="w-4 h-4" />
@@ -1729,7 +3372,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
               <button
                 type="button"
                 onClick={() => applyFormatting("> ", "")}
-                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 transition"
+                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 transition cursor-pointer shrink-0"
                 title="Quote (>)"
               >
                 <Quote className="w-4 h-4" />
@@ -1737,7 +3380,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
               <button
                 type="button"
                 onClick={() => applyFormatting("```\n", "\n```")}
-                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 transition"
+                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 transition cursor-pointer shrink-0"
                 title="Code Block"
               >
                 <Code className="w-4 h-4" />
@@ -1748,53 +3391,61 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
             <div className="flex items-center gap-0.5 bg-white p-0.5 rounded-md border-2 border-gray-200 shrink-0 ml-auto">
               <button
                 type="button"
-                onClick={() => setViewMode("edit")}
+                onClick={() => setViewMode("interactive")}
                 className={cn(
-                  "px-2 py-0.5 text-xs font-bold rounded transition",
-                  viewMode === "edit"
+                  "px-2 sm:px-2.5 py-0.5 text-[11px] sm:text-xs font-bold rounded transition cursor-pointer flex items-center gap-1 whitespace-nowrap",
+                  viewMode === "interactive"
                     ? "bg-[#3B82F6] text-white"
                     : "text-gray-600 hover:text-gray-900"
                 )}
+                title="Interactive Document with Live Checkboxes"
               >
-                Edit
+                <CheckSquare className="w-3 h-3" />
+                <span>Interactive</span>
               </button>
               <button
                 type="button"
-                onClick={() => setViewMode("preview")}
+                onClick={() => setViewMode("markdown")}
                 className={cn(
-                  "px-2 py-0.5 text-xs font-bold rounded transition",
-                  viewMode === "preview"
+                  "px-2 sm:px-2.5 py-0.5 text-[11px] sm:text-xs font-bold rounded transition cursor-pointer flex items-center gap-1 whitespace-nowrap",
+                  viewMode === "markdown"
                     ? "bg-[#3B82F6] text-white"
                     : "text-gray-600 hover:text-gray-900"
                 )}
+                title="Raw Markdown Textarea"
               >
-                Preview
+                <PenTool className="w-3 h-3" />
+                <span>Markdown</span>
               </button>
               <button
                 type="button"
                 onClick={() => setViewMode("split")}
                 className={cn(
-                  "hidden md:block px-2 py-0.5 text-xs font-bold rounded transition",
+                  "hidden md:flex items-center gap-1 px-2.5 py-0.5 text-xs font-bold rounded transition cursor-pointer whitespace-nowrap",
                   viewMode === "split"
                     ? "bg-[#3B82F6] text-white"
                     : "text-gray-600 hover:text-gray-900"
                 )}
+                title="Split side-by-side view"
               >
-                Split
+                <Layers className="w-3 h-3" />
+                <span>Split</span>
               </button>
             </div>
           </div>
 
-          {/* Editor & Live Preview Canvas */}
+          {/* Editor & Live Document Canvas */}
           <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
-            {/* Editor Area */}
-            {(viewMode === "edit" || viewMode === "split") && (
-              <div
-                className={cn(
-                  "flex-1 flex flex-col p-4 sm:p-6 relative overflow-hidden bg-white",
-                  viewMode === "split" && "border-r-2 border-gray-200 md:w-1/2"
-                )}
-              >
+            {/* 1. Interactive Document View (Default - Live In-Place Checkboxes) */}
+            {viewMode === "interactive" && (
+              <div className="flex-1 p-4 sm:p-8 overflow-y-auto bg-white">
+                {renderInteractiveDocument()}
+              </div>
+            )}
+
+            {/* 2. Raw Markdown Textarea View */}
+            {viewMode === "markdown" && (
+              <div className="flex-1 flex flex-col p-4 sm:p-6 relative overflow-hidden bg-white">
                 <textarea
                   ref={textareaRef}
                   value={currentContent}
@@ -1802,35 +3453,39 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
                   onKeyDown={handleEditorKeyDown}
                   onSelect={handleSelectText}
                   onContextMenu={handleContextMenu}
-                  placeholder="Start typing your notes...&#10;&#10;✨ Tip: Type '/' for Slash Commands&#10;• Type '- ' for Bullet Points&#10;• Type '1. ' for Numbered Lists&#10;• Type '[] ' for To-Do Checklist&#10;• Type '# ' for Large Heading"
+                  placeholder="Start typing your notes...&#10;&#10;✨ Shortcuts:&#10;• Type '/--checkbox create email templete --/' for Instant Checkbox&#10;• Type '/' for Notion-Style Slash Commands&#10;• Type '- ' for Bullet Points&#10;• Type '1. ' for Numbered Lists&#10;• Type '[] ' for To-Do Checklist&#10;• Type '# ' for Large Heading"
                   className="w-full flex-1 h-full min-h-0 p-4 sm:p-5 rounded-xl bg-[#F8FAFC] text-gray-900 font-mono text-sm leading-relaxed border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] resize-none selection:bg-blue-100"
                 />
               </div>
             )}
 
-            {/* Rich Preview Area */}
-            {(viewMode === "preview" || viewMode === "split") && (
-              <div
-                className={cn(
-                  "flex-1 p-6 sm:p-8 overflow-y-auto bg-white",
-                  viewMode === "split" && "md:w-1/2"
-                )}
-              >
-                <div className="max-w-3xl mx-auto">
-                  <div className="flex items-center gap-2 mb-4 pb-2 border-b-2 border-gray-100">
-                    <span className="text-[10px] font-extrabold uppercase tracking-wider bg-blue-50 text-[#3B82F6] px-2 py-0.5 rounded">
-                      Live Rich Preview
-                    </span>
-                    <span className="text-xs text-gray-400">({readTimeMin} min read)</span>
-                  </div>
-
-                  <h1 className="text-2xl sm:text-3xl font-extrabold text-gray-950 pb-2 mb-4">
-                    {currentTitle || "Untitled Note"}
-                  </h1>
-
-                  {renderRichPreview()}
+            {/* 3. Split Mode: Textarea + Live Interactive Document */}
+            {viewMode === "split" && (
+              <>
+                <div className="flex-1 flex flex-col p-4 sm:p-6 relative overflow-hidden bg-white border-r-2 border-gray-200 md:w-1/2">
+                  <textarea
+                    ref={textareaRef}
+                    value={currentContent}
+                    onChange={handleContentChange}
+                    onKeyDown={handleEditorKeyDown}
+                    onSelect={handleSelectText}
+                    onContextMenu={handleContextMenu}
+                    placeholder="Start typing your notes..."
+                    className="w-full flex-1 h-full min-h-0 p-4 rounded-xl bg-[#F8FAFC] text-gray-900 font-mono text-sm leading-relaxed border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] resize-none"
+                  />
                 </div>
-              </div>
+                <div className="flex-1 p-6 sm:p-8 overflow-y-auto bg-white md:w-1/2">
+                  <div className="max-w-3xl mx-auto">
+                    <div className="flex items-center gap-2 mb-4 pb-2 border-b-2 border-gray-100">
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider bg-blue-50 text-[#3B82F6] px-2 py-0.5 rounded">
+                        Interactive Preview
+                      </span>
+                      <span className="text-xs text-gray-400">({readTimeMin} min read)</span>
+                    </div>
+                    {renderInteractiveDocument()}
+                  </div>
+                </div>
+              </>
             )}
           </div>
 
@@ -1842,13 +3497,13 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
               <span className="hidden sm:inline text-gray-400">• {readTimeMin} min read</span>
             </div>
             <div className="flex items-center gap-3">
-              <span className="hidden md:inline text-gray-400">💡 Press <kbd className="px-1.5 py-0.5 rounded bg-gray-200 text-gray-800 text-[10px] font-mono">/</kbd> for quick menu</span>
+              <span className="hidden md:inline text-gray-400">💡 Type <code className="text-blue-600 bg-blue-50 px-1 py-0.5 rounded">/--checkbox task --/</code> or click Checkbox</span>
               <span><kbd className="px-1.5 py-0.5 rounded bg-gray-200 text-gray-800 text-[10px]">Ctrl+Z</kbd> Undo</span>
               <span><kbd className="px-1.5 py-0.5 rounded bg-gray-200 text-gray-800 text-[10px]">Ctrl+S</kbd> Save</span>
             </div>
           </div>
 
-          {/* 🪄 Notion-Style Slash Command Palette Popover */}
+          {/* 🪄 Notion-Style Slash Command Palette Popover (in Markdown mode) */}
           {slashMenu && slashMenu.isOpen && (
             <div
               style={{ top: `${slashMenu.y}px`, left: `${slashMenu.x}px` }}
@@ -1910,7 +3565,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
               <button
                 type="button"
                 onClick={() => applyFormatting("**", "**")}
-                className="p-1.5 rounded hover:bg-gray-800 text-gray-200 font-bold transition"
+                className="p-1.5 rounded hover:bg-gray-800 text-gray-200 font-bold transition cursor-pointer"
                 title="Bold (Ctrl+B)"
               >
                 <Bold className="w-3.5 h-3.5" />
@@ -1918,23 +3573,24 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
               <button
                 type="button"
                 onClick={() => applyFormatting("*", "*")}
-                className="p-1.5 rounded hover:bg-gray-800 text-gray-200 italic transition"
+                className="p-1.5 rounded hover:bg-gray-800 text-gray-200 italic transition cursor-pointer"
                 title="Italic (Ctrl+I)"
               >
                 <Italic className="w-3.5 h-3.5" />
               </button>
               <button
                 type="button"
-                onClick={() => applyFormatting("~~", "~~")}
-                className="p-1.5 rounded hover:bg-gray-800 text-gray-200 transition"
-                title="Strikethrough"
+                onClick={() => handleAiActionOnSelection("convert_to_checkbox")}
+                className="p-1.5 rounded hover:bg-gray-800 text-blue-400 font-bold transition flex items-center gap-1 text-xs cursor-pointer"
+                title="Convert selection to Task Checkbox"
               >
-                <Strikethrough className="w-3.5 h-3.5" />
+                <CheckSquare className="w-3.5 h-3.5" />
+                <span className="text-[10px]">Checkbox</span>
               </button>
               <button
                 type="button"
                 onClick={() => applyFormatting("`", "`")}
-                className="p-1.5 rounded hover:bg-gray-800 text-emerald-400 font-mono transition"
+                className="p-1.5 rounded hover:bg-gray-800 text-emerald-400 font-mono transition cursor-pointer"
                 title="Inline Code"
               >
                 <Code className="w-3.5 h-3.5" />
@@ -1942,7 +3598,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
               <button
                 type="button"
                 onClick={() => applyFormatting("==", "==")}
-                className="p-1.5 rounded hover:bg-gray-800 text-amber-400 transition"
+                className="p-1.5 rounded hover:bg-gray-800 text-amber-400 transition cursor-pointer"
                 title="Highlight"
               >
                 <Highlighter className="w-3.5 h-3.5" />
@@ -1952,9 +3608,24 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
 
               <button
                 type="button"
+                onClick={() => handleAiActionOnSelection("execute_task")}
+                disabled={isAiProcessingSelection}
+                className="px-2 py-1 rounded bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 text-xs font-bold flex items-center gap-1 transition cursor-pointer"
+                title="AI: Generate Deliverable (Email template, etc.)"
+              >
+                {isAiProcessingSelection && activeAiAction === "execute_task" ? (
+                  <Loader2 className="w-3 h-3 animate-spin text-amber-400" />
+                ) : (
+                  <Sparkles className="w-3 h-3 text-amber-400" />
+                )}
+                <span>AI Deliverable</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => handleAiActionOnSelection("make_short")}
                 disabled={isAiProcessingSelection}
-                className="px-2 py-1 rounded bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 text-xs font-bold flex items-center gap-1 transition"
+                className="px-2 py-1 rounded bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 text-xs font-bold flex items-center gap-1 transition cursor-pointer"
                 title="Make selection shorter and concise"
               >
                 {isAiProcessingSelection && activeAiAction === "make_short" ? (
@@ -1964,37 +3635,27 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
                 )}
                 <span>Shorten</span>
               </button>
-
-              <button
-                type="button"
-                onClick={() => handleAiActionOnSelection("professional")}
-                disabled={isAiProcessingSelection}
-                className="px-2 py-1 rounded bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 text-xs font-bold flex items-center gap-1 transition"
-              >
-                {isAiProcessingSelection && activeAiAction === "professional" ? (
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                ) : (
-                  <Sparkles className="w-3 h-3 text-amber-400" />
-                )}
-                <span>AI Polish</span>
-              </button>
             </div>
           )}
 
           {/* Right-Click AI Menu on Selection */}
           {contextMenu && contextMenu.isOpen && (
             <div
-              style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}
-              className="fixed z-50 w-72 bg-[#111827] text-white rounded-xl border-2 border-gray-700 p-2 shadow-2xl animate-in fade-in zoom-in-95 duration-100 select-none"
+              style={{
+                top: `${contextMenu.y}px`,
+                left: `${contextMenu.x}px`,
+                maxHeight: "calc(100vh - 24px)",
+              }}
+              className="fixed z-50 w-72 sm:w-80 bg-[#111827] text-white rounded-xl border-2 border-gray-700 p-2 shadow-2xl animate-in fade-in zoom-in-95 duration-100 select-none flex flex-col"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Header */}
-              <div className="px-3 py-2 border-b border-gray-800 flex items-center justify-between gap-2">
+              <div className="px-2.5 py-1.5 border-b border-gray-800 flex items-center justify-between gap-2 shrink-0">
                 <div className="flex items-center gap-1.5 min-w-0">
-                  <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
+                  <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                   <div className="min-w-0">
                     <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-400 block">
-                      AI on Selection
+                      AI & Task Actions
                     </span>
                     <span className="text-xs text-gray-300 font-medium truncate block max-w-[180px]">
                       "{contextMenu.selectedText}"
@@ -2003,56 +3664,70 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
                 </div>
                 <button
                   onClick={() => setContextMenu(null)}
-                  className="p-1 text-gray-400 hover:text-white rounded"
+                  className="p-1 text-gray-400 hover:text-white rounded cursor-pointer"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
               </div>
 
-              {/* Actions List */}
-              <div className="py-1.5 space-y-1">
+              {/* Actions List with smooth scrolling and compact padding */}
+              <div className="py-1 space-y-0.5 overflow-y-auto max-h-[min(380px,calc(100vh-120px))] pr-0.5">
                 {[
+                  {
+                    id: "convert_to_checkbox",
+                    label: "Convert to Task Checkbox",
+                    desc: "Turn into interactive - [ ] task",
+                    icon: CheckSquare,
+                    color: "text-blue-400 bg-blue-950/60",
+                  },
+                  {
+                    id: "execute_task",
+                    label: "Generate Task Deliverable",
+                    desc: "Email draft, template, or code",
+                    icon: Sparkles,
+                    color: "text-amber-400 bg-amber-950/60",
+                  },
                   {
                     id: "make_short",
                     label: "Make Shorter (Short Version)",
-                    desc: "Isko aur short, concise & punchy kar do",
+                    desc: "Short, concise & punchy",
                     icon: Scissors,
-                    color: "text-rose-400",
+                    color: "text-rose-400 bg-rose-950/60",
                   },
                   {
                     id: "hinglish_to_english",
                     label: "Translate Hinglish → English",
-                    desc: "Convert Hindi/Hinglish to English",
+                    desc: "Hindi/Hinglish to standard English",
                     icon: Languages,
-                    color: "text-blue-400",
+                    color: "text-blue-400 bg-blue-950/60",
                   },
                   {
                     id: "professional",
-                    label: "Company Standard / Professional",
-                    desc: "Formal corporate executive tone",
+                    label: "Corporate Professional Tone",
+                    desc: "Formal executive business tone",
                     icon: Briefcase,
-                    color: "text-purple-400",
+                    color: "text-purple-400 bg-purple-950/60",
                   },
                   {
                     id: "grammar",
                     label: "Fix Grammar & Spelling",
-                    desc: "Correct typos and errors",
+                    desc: "Fix typos, tense & sentence flow",
                     icon: CheckCheck,
-                    color: "text-emerald-400",
+                    color: "text-emerald-400 bg-emerald-950/60",
                   },
                   {
                     id: "english_to_simple",
                     label: "Simplify for Client",
-                    desc: "Clear plain English explanation",
+                    desc: "Easy, crystal clear explanation",
                     icon: Smile,
-                    color: "text-amber-400",
+                    color: "text-amber-400 bg-amber-950/60",
                   },
                   {
                     id: "summarize",
                     label: "Summarize Selection",
                     desc: "Crisp bullet points summary",
                     icon: FileText,
-                    color: "text-indigo-400",
+                    color: "text-indigo-400 bg-indigo-950/60",
                   },
                 ].map((action) => {
                   const Icon = action.icon;
@@ -2062,20 +3737,20 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
                       key={action.id}
                       disabled={isAiProcessingSelection}
                       onClick={() => handleAiActionOnSelection(action.id)}
-                      className="w-full text-left p-2 rounded-lg hover:bg-gray-800 transition-all flex items-start gap-2.5 group cursor-pointer disabled:opacity-50"
+                      className="w-full text-left p-1.5 rounded-lg hover:bg-gray-800/90 transition-all flex items-center gap-2 group cursor-pointer disabled:opacity-50"
                     >
-                      <div className={cn("p-1 rounded bg-gray-800 group-hover:bg-gray-700 transition shrink-0 mt-0.5", action.color)}>
+                      <div className={cn("p-1 rounded transition shrink-0", action.color)}>
                         {isCurrentAction ? (
                           <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400" />
                         ) : (
                           <Icon className="w-3.5 h-3.5" />
                         )}
                       </div>
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <div className="text-xs font-bold text-gray-100 group-hover:text-amber-300 leading-tight">
                           {action.label}
                         </div>
-                        <div className="text-[10px] text-gray-400 font-medium truncate mt-0.5">
+                        <div className="text-[10px] text-gray-400 font-medium truncate">
                           {action.desc}
                         </div>
                       </div>
@@ -2085,7 +3760,7 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
               </div>
 
               {/* Footer */}
-              <div className="px-3 py-1.5 border-t border-gray-800 text-[10px] text-gray-400 font-medium flex items-center justify-between">
+              <div className="px-2.5 py-1 border-t border-gray-800 text-[10px] text-gray-400 font-medium flex items-center justify-between shrink-0">
                 <span>Selected text will be replaced</span>
                 <span className="text-[9px] bg-gray-800 px-1.5 py-0.5 rounded text-gray-300">Esc to close</span>
               </div>
@@ -2111,13 +3786,84 @@ export function NotepadModule({ projectId, notes, onNotesChange }: NotepadModule
               variant="primary"
               size="md"
               onClick={handleCreateNote}
-              className="mt-5"
+              disabled={isCreatingNote}
+              className="mt-5 active:scale-95 transition-all gap-2 cursor-pointer shadow-md"
             >
-              Create New Note
+              {isCreatingNote ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Creating Note...</span>
+                </>
+              ) : (
+                <>
+                  <Plus className="w-4 h-4" strokeWidth={2.5} />
+                  <span>Create New Note</span>
+                </>
+              )}
             </Button>
           </div>
         </div>
       )}
+
+      {/* 🤖 AI Task Deliverable Modal */}
+      <Modal
+        isOpen={taskDeliverableModal.isOpen}
+        onClose={() => setTaskDeliverableModal((prev) => ({ ...prev, isOpen: false }))}
+        title={`AI Task Deliverable: "${taskDeliverableModal.taskTitle}"`}
+        description="Gemini AI has generated the complete deliverable for this note task."
+        maxWidth="2xl"
+      >
+        <div className="space-y-4">
+          {taskDeliverableModal.isLoading ? (
+            <div className="p-12 flex flex-col items-center justify-center gap-3 text-center">
+              <Loader2 className="w-8 h-8 text-amber-500 animate-spin" />
+              <p className="text-sm font-bold text-gray-700">Generating deliverable for "{taskDeliverableModal.taskTitle}"...</p>
+              <p className="text-xs text-gray-400">Drafting professional email template / execution content with Gemini AI</p>
+            </div>
+          ) : (
+            <>
+              <div className="p-4 bg-gray-50 border-2 border-gray-200 rounded-xl max-h-96 overflow-y-auto font-sans text-sm text-gray-900 leading-relaxed whitespace-pre-wrap">
+                {taskDeliverableModal.deliverable}
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-2 pt-2 border-t border-gray-100">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    navigator.clipboard.writeText(taskDeliverableModal.deliverable);
+                    toast.success("Deliverable copied to clipboard!");
+                  }}
+                  className="gap-1.5 w-full sm:w-auto text-xs"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>Copy to Clipboard</span>
+                </Button>
+
+                <div className="flex items-center gap-2 w-full sm:w-auto">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setTaskDeliverableModal((prev) => ({ ...prev, isOpen: false }))}
+                    className="w-full sm:w-auto text-xs"
+                  >
+                    Close
+                  </Button>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={handleInsertDeliverableBelowTask}
+                    className="gap-1.5 w-full sm:w-auto text-xs bg-[#3B82F6]"
+                  >
+                    <ArrowRight className="w-3.5 h-3.5" />
+                    <span>Insert Below Task in Note</span>
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </Modal>
     </div>
   );
 }

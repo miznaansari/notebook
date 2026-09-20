@@ -935,10 +935,10 @@ export function QuestionsModule({
 
                             {/* Add Answer Form */}
                             <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
-                              <div className="relative flex-1 flex items-center">
-                                <input
-                                  type="text"
-                                  placeholder="Type or speak client answer (Sarvam AI STT enabled)..."
+                              <div className="relative flex-1">
+                                <textarea
+                                  rows={2}
+                                  placeholder="Type or speak client answer (Live Hinglish STT enabled, Enter to save)..."
                                   value={newAnswerText[q.id] || ""}
                                   onChange={(e) =>
                                     setNewAnswerText((prev) => ({
@@ -947,11 +947,14 @@ export function QuestionsModule({
                                     }))
                                   }
                                   onKeyDown={(e) => {
-                                    if (e.key === "Enter") handleAddAnswer(q.id);
+                                    if (e.key === "Enter" && !e.shiftKey) {
+                                      e.preventDefault();
+                                      handleAddAnswer(q.id);
+                                    }
                                   }}
-                                  className="w-full h-9 sm:h-8 pl-3 pr-24 rounded-md bg-[#F3F4F6] text-sm font-medium text-gray-900 placeholder:text-gray-400 border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] transition"
+                                  className="w-full p-2.5 pr-14 rounded-lg bg-[#F3F4F6] text-xs font-medium text-gray-900 placeholder:text-gray-400 border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] transition resize-y min-h-[52px]"
                                 />
-                                <div className="absolute right-1">
+                                <div className="absolute right-2 top-2">
                                   <VoiceMicButton
                                     onInterimTranscript={(interim) => {
                                       setNewAnswerText((prev) => ({

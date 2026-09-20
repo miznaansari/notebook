@@ -28,30 +28,33 @@ model Project {
   color       String             @default("#3B82F6")
   icon        String             @default("folder")
   isArchived  Boolean            @default(false)
+  orderIndex  Int                @default(0)
   userId      String
-  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt   DateTime           @default(now())
   updatedAt   DateTime           @updatedAt
-  notes       Note[]
-  questions   Question[]
-  meetings    Meeting[]
   tasks       FollowUpTask[]
+  meetings    Meeting[]
+  notes       Note[]
+  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   categories  QuestionCategory[]
+  questions   Question[]
 
   @@index([userId])
+  @@index([orderIndex])
   @@map("projects")
 }
 
 model Note {
-  id        String   @id @default(cuid())
-  title     String   @default("Untitled Note")
-  content   String   @db.LongText
-  isPinned  Boolean  @default(false)
-  tags      String?  @db.Text
-  projectId String
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String   @id @default(cuid())
+  title       String   @default("Untitled Note")
+  content     String   @db.LongText
+  description String?  @db.Text
+  isPinned    Boolean  @default(false)
+  tags        String?  @db.Text
+  projectId   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([projectId])
   @@map("notes")
@@ -61,9 +64,9 @@ model QuestionCategory {
   id        String     @id @default(cuid())
   name      String
   projectId String
+  createdAt DateTime   @default(now())
   project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
   questions Question[]
-  createdAt DateTime   @default(now())
 
   @@index([projectId])
   @@map("question_categories")
@@ -74,35 +77,39 @@ model Question {
   title            String            @db.Text
   details          String?           @db.Text
   category         String            @default("General")
-  status           String            @default("PENDING") // PENDING, ASKED, ANSWERED, NEED_FOLLOWUP
-  priority         String            @default("MEDIUM") // LOW, MEDIUM, HIGH, URGENT
+  status           String            @default("PENDING")
+  priority         String            @default("MEDIUM")
   forNextMeeting   Boolean           @default(false)
   orderIndex       Int               @default(0)
   projectId        String
-  project          Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
   categoryId       String?
-  categoryRel      QuestionCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   meetingId        String?
-  meeting          Meeting?          @relation(fields: [meetingId], references: [id], onDelete: SetNull)
-  answers          Answer[]
-  meetingQuestions MeetingQuestion[]
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
+  deletedAt        DateTime?
+  isDeleted        Boolean           @default(false)
+  answers          Answer[]
+  meetingQuestions MeetingQuestion[]
+  categoryRel      QuestionCategory? @relation(fields: [categoryId], references: [id])
+  meeting          Meeting?          @relation(fields: [meetingId], references: [id])
+  project          Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([projectId])
   @@index([meetingId])
   @@index([status])
+  @@index([categoryId], map: "questions_categoryId_fkey")
+  @@index([isDeleted])
   @@map("questions")
 }
 
 model Answer {
   id         String   @id @default(cuid())
   content    String   @db.LongText
-  author     String?  @default("Client") // Client, Me, Discussion
+  author     String?  @default("Client")
   questionId String
-  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
 
   @@index([questionId])
   @@map("answers")
@@ -116,14 +123,14 @@ model Meeting {
   location         String?           @default("Google Meet")
   attendees        String?           @db.Text
   notes            String?           @db.LongText
-  status           String            @default("SCHEDULED") // SCHEDULED, COMPLETED, CANCELLED
+  status           String            @default("SCHEDULED")
   projectId        String
-  project          Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  questions        Question[]
-  meetingQuestions MeetingQuestion[]
-  tasks            FollowUpTask[]
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
+  tasks            FollowUpTask[]
+  meetingQuestions MeetingQuestion[]
+  project          Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  questions        Question[]
 
   @@index([projectId])
   @@map("meetings")
@@ -132,11 +139,11 @@ model Meeting {
 model MeetingQuestion {
   id         String   @id @default(cuid())
   meetingId  String
-  meeting    Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
   questionId String
-  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
   notes      String?  @db.Text
   createdAt  DateTime @default(now())
+  meeting    Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
 
   @@unique([meetingId, questionId])
   @@index([meetingId])
@@ -148,15 +155,15 @@ model FollowUpTask {
   id          String    @id @default(cuid())
   title       String
   description String?   @db.Text
-  status      String    @default("PENDING") // PENDING, IN_PROGRESS, COMPLETED
-  priority    String    @default("MEDIUM") // LOW, MEDIUM, HIGH, URGENT
+  status      String    @default("PENDING")
+  priority    String    @default("MEDIUM")
   dueDate     DateTime?
   projectId   String
-  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   meetingId   String?
-  meeting     Meeting?  @relation(fields: [meetingId], references: [id], onDelete: SetNull)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+  meeting     Meeting?  @relation(fields: [meetingId], references: [id])
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([projectId])
   @@index([meetingId])
@@ -170,8 +177,8 @@ model QuestionTemplate {
   content     String   @db.LongText
   isSystem    Boolean  @default(false)
   userId      String?
-  user        User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt   DateTime @default(now())
+  user        User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@map("question_templates")

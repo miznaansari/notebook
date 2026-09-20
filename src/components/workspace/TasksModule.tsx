@@ -83,6 +83,18 @@ export function TasksModule({
   const [quickMeetingId, setQuickMeetingId] = React.useState("");
   const voiceBaseQuickTitleRef = React.useRef<string | null>(null);
   const voiceBaseAiRawRef = React.useRef<string | null>(null);
+  const quickTextareaRef = React.useRef<HTMLTextAreaElement>(null);
+
+  // Auto-grow textarea dynamically when text is long or multi-line
+  React.useEffect(() => {
+    if (quickTextareaRef.current) {
+      quickTextareaRef.current.style.height = "auto";
+      quickTextareaRef.current.style.height = `${Math.min(
+        Math.max(quickTextareaRef.current.scrollHeight, 44),
+        140
+      )}px`;
+    }
+  }, [quickTitle]);
 
   // Manual Add Modal State
   const [isAddModalOpen, setIsAddModalOpen] = React.useState(false);
@@ -769,15 +781,22 @@ Schedule follow-up sprint demo for next Tuesday 4 PM.`,
         onSubmit={handleQuickAddTask}
         className="bg-white p-3 sm:p-4 rounded-xl border-2 border-gray-200 shadow-sm flex flex-col lg:flex-row gap-2.5 items-stretch lg:items-center"
       >
-        <div className="relative flex-1 flex items-center">
-          <input
-            type="text"
+        <div className="relative flex-1 flex items-start">
+          <textarea
+            ref={quickTextareaRef}
+            rows={1}
             placeholder="Type or speak follow-up task (e.g. Fix bulk account import, client sandbox key)..."
             value={quickTitle}
             onChange={(e) => setQuickTitle(e.target.value)}
-            className="w-full h-11 pl-4 pr-24 rounded-lg bg-[#F3F4F6] text-sm font-medium text-gray-900 placeholder:text-gray-400 border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] transition"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                handleQuickAddTask(e);
+              }
+            }}
+            className="w-full min-h-[44px] max-h-36 py-2.5 pl-4 pr-36 rounded-lg bg-[#F3F4F6] text-sm font-medium text-gray-900 placeholder:text-gray-400 border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] transition resize-none leading-relaxed"
           />
-          <div className="absolute right-2 flex items-center gap-1">
+          <div className="absolute right-2 top-1.5 flex items-center gap-1">
             <VoiceMicButton
               onInterimTranscript={(interim) => {
                 if (voiceBaseQuickTitleRef.current === null) {
