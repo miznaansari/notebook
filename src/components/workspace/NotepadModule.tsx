@@ -30,7 +30,6 @@ import {
   CheckCheck,
   Smile,
   Loader2,
-  X,
   Undo2,
   Redo2,
   Quote,
@@ -54,11 +53,14 @@ import {
   ListCheck,
   PenTool,
   CornerDownLeft,
+  WandSparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Modal } from "@/components/ui/modal";
 import { AIMagicButton } from "@/components/ui/ai-magic-button";
+import { AiActionMenu, type AiMenuEntry, type AiMenuGroup } from "@/components/ui/ai-action-menu";
+import { MarkdownLiveEditor, MD_TASK_PREFIX, type MarkdownEditorHandle } from "./MarkdownLiveEditor";
 import { VoiceMicButton } from "@/components/ui/voice-mic-button";
 import { cn, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
@@ -108,83 +110,58 @@ interface SlashMenuState {
 
 interface FloatingBubbleState {
   isOpen: boolean;
-  x: number;
-  y: number;
+  // Viewport coordinates of the selection the toolbar points at
+  anchorX: number;
+  anchorTop: number;
+  anchorBottom: number;
   selectedText: string;
   start: number;
   end: number;
 }
 
-// Line prefixes that the Markdown editor draws as real bullets / checkboxes instead of raw syntax
-const MD_TASK_PREFIX = /^(\s*)(-\s*\[([ xX])?\]\s?)/;
-const MD_BULLET_PREFIX = /^(\s*)([-*•])(\s)/;
+// AI submenus shared by the right-click selection menu and the per-task AI menu
+const TRANSLATE_MENU: AiMenuGroup = {
+  id: "translate",
+  label: "Translate",
+  icon: Languages,
+  items: [
+    { id: "hinglish_to_english", label: "Hinglish → English", hint: "Hindi/Hinglish to standard English", icon: Languages },
+    { id: "english_to_hinglish", label: "English → Hinglish", hint: "English to natural conversational Hinglish", icon: Languages },
+  ],
+};
+
+const REWRITE_MENU: AiMenuGroup = {
+  id: "rewrite",
+  label: "Rewrite",
+  icon: WandSparkles,
+  items: [
+    { id: "grammar", label: "Fix grammar & spelling", hint: "Fix typos, tense & sentence flow", icon: CheckCheck },
+    { id: "professional", label: "Professional tone", hint: "Formal executive business tone", icon: Briefcase },
+    { id: "english_to_simple", label: "Simplify for client", hint: "Easy, crystal clear explanation", icon: Smile },
+    { id: "make_short", label: "Make shorter", hint: "Short, concise & punchy", icon: Scissors },
+  ],
+};
+
+const SELECTION_MENU: AiMenuEntry[] = [
+  TRANSLATE_MENU,
+  REWRITE_MENU,
+  { id: "summarize", label: "Summarize", hint: "Crisp bullet points summary", icon: FileText },
+  "divider",
+  { id: "convert_to_checkbox", label: "Convert to task", hint: "Turn into an interactive - [ ] task", icon: CheckSquare },
+  { id: "execute_task", label: "Generate deliverable", hint: "Email draft, template, or code", icon: Sparkles },
+];
+
+const taskMenuEntries = (isEmailTask: boolean): AiMenuEntry[] => [
+  TRANSLATE_MENU,
+  REWRITE_MENU,
+  "divider",
+  isEmailTask
+    ? { id: "execute_task", label: "Draft email", hint: "Full email template with subject & body", icon: Mail }
+    : { id: "execute_task", label: "Generate deliverable", hint: "Draft AI solution or template", icon: Sparkles },
+];
 
 // Titles that mean the user never named the note, so AI may name it
 const DEFAULT_NOTE_TITLES = ["", "new note", "untitled note", "untitled"];
-
-// Styled layer rendered behind the transparent Markdown textarea. It keeps every raw
-// character (prefixes are only made transparent) so wrapping and caret positions line up exactly.
-function MarkdownLiveBackdrop({ content }: { content: string }) {
-  const lines = content.split("\n");
-  return (
-    <>
-      {lines.map((line, idx) => {
-        const lineBreak = idx < lines.length - 1 ? "\n" : "";
-
-        const task = line.match(MD_TASK_PREFIX);
-        if (task) {
-          const isChecked = task[3] === "x" || task[3] === "X";
-          return (
-            <React.Fragment key={idx}>
-              {task[1]}
-              <span className="relative text-transparent">
-                {task[2]}
-                <span
-                  style={{ left: `${task[2].indexOf("[")}ch` }}
-                  className={cn(
-                    "absolute top-1/2 -translate-y-1/2 w-3.5 h-3.5 rounded border-2 flex items-center justify-center",
-                    isChecked ? "bg-[#3B82F6] border-[#3B82F6] text-white" : "border-gray-400 bg-white"
-                  )}
-                >
-                  {isChecked && <Check className="w-2.5 h-2.5 stroke-[3]" />}
-                </span>
-              </span>
-              <span className={isChecked ? "line-through text-gray-400" : undefined}>
-                {line.slice(task[0].length)}
-              </span>
-              {lineBreak}
-            </React.Fragment>
-          );
-        }
-
-        const bullet = line.match(MD_BULLET_PREFIX);
-        if (bullet) {
-          return (
-            <React.Fragment key={idx}>
-              {bullet[1]}
-              <span className="relative text-transparent">
-                {bullet[2]}
-                <span className="absolute left-0.5 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-[#3B82F6]" />
-              </span>
-              {bullet[3]}
-              {line.slice(bullet[0].length)}
-              {lineBreak}
-            </React.Fragment>
-          );
-        }
-
-        return (
-          <React.Fragment key={idx}>
-            {line}
-            {lineBreak}
-          </React.Fragment>
-        );
-      })}
-      {/* Keeps a trailing empty line the same height as in the textarea */}
-      {" "}
-    </>
-  );
-}
 
 export function NotepadModule({
   projectId,
@@ -262,7 +239,7 @@ export function NotepadModule({
   const [activeTaskAiMenu, setActiveTaskAiMenu] = React.useState<{ lineIdx: number; taskText: string } | null>(null);
   const [taskAiLoadingIdx, setTaskAiLoadingIdx] = React.useState<number | null>(null);
 
-  const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+  const markdownEditorRef = React.useRef<MarkdownEditorHandle>(null);
   const editorContainerRef = React.useRef<HTMLDivElement>(null);
   const autoSaveTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
 
@@ -751,7 +728,7 @@ export function NotepadModule({
       }
       // Undo Shortcut
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !e.shiftKey) {
-        if (document.activeElement === textareaRef.current || document.activeElement?.tagName !== "INPUT") {
+        if (markdownEditorRef.current?.hasFocus || document.activeElement?.tagName !== "INPUT") {
           e.preventDefault();
           handleUndo();
         }
@@ -761,7 +738,7 @@ export function NotepadModule({
         ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") ||
         ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && e.shiftKey)
       ) {
-        if (document.activeElement === textareaRef.current || document.activeElement?.tagName !== "INPUT") {
+        if (markdownEditorRef.current?.hasFocus || document.activeElement?.tagName !== "INPUT") {
           e.preventDefault();
           handleRedo();
         }
@@ -917,10 +894,10 @@ export function NotepadModule({
 
   // Execute Slash Command replacement
   const applySlashCommand = (cmd: (typeof slashCommands)[0]) => {
-    if (!slashMenu || !textareaRef.current) return;
-    const textarea = textareaRef.current;
+    if (!slashMenu || !markdownEditorRef.current) return;
+    const editor = markdownEditorRef.current;
     const slashStart = slashMenu.slashStartPos;
-    const cursorPos = textarea.selectionStart;
+    const cursorPos = editor.selectionStart;
 
     const beforeSlash = currentContent.substring(0, slashStart);
     const afterCursor = currentContent.substring(cursorPos);
@@ -943,9 +920,9 @@ export function NotepadModule({
     setSlashMenu(null);
 
     setTimeout(() => {
-      textarea.focus();
+      editor.focus();
       const newCursorPos = slashStart + insertion.length;
-      textarea.setSelectionRange(newCursorPos, newCursorPos);
+      editor.setSelectionRange(newCursorPos, newCursorPos);
     }, 10);
   };
 
@@ -993,11 +970,11 @@ export function NotepadModule({
       return;
     }
 
-    const textarea = textareaRef.current;
-    if (!textarea) return;
+    const editor = markdownEditorRef.current;
+    if (!editor) return;
 
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
+    const start = editor.selectionStart;
+    const end = editor.selectionEnd;
     const selected = currentContent.substring(start, end);
 
     let newContent = "";
@@ -1044,17 +1021,17 @@ export function NotepadModule({
     setBubbleToolbar(null);
 
     setTimeout(() => {
-      textarea.focus();
-      textarea.setSelectionRange(newStart, newEnd);
+      editor.focus();
+      editor.setSelectionRange(newStart, newEnd);
     }, 10);
   };
 
   // Live Auto-Formatting & Smart Keys on Textarea
-  const handleEditorKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
+  const handleEditorKeyDown = (e: KeyboardEvent) => {
+    const editor = markdownEditorRef.current;
+    if (!editor) return;
 
-    const { selectionStart, selectionEnd, value } = textarea;
+    const { selectionStart, selectionEnd, value } = editor;
 
     // 1. If Slash Menu is open, handle arrow navigation and selection
     if (slashMenu && slashMenu.isOpen && filteredSlashCommands.length > 0) {
@@ -1148,7 +1125,7 @@ export function NotepadModule({
           latestContentRef.current = newContent;
           scheduleAutoSave();
           setTimeout(() => {
-            textarea.setSelectionRange(Math.max(lineStart, selectionStart - 2), Math.max(lineStart, selectionEnd - 2));
+            editor.setSelectionRange(Math.max(lineStart, selectionStart - 2), Math.max(lineStart, selectionEnd - 2));
           }, 0);
         }
       } else {
@@ -1158,7 +1135,7 @@ export function NotepadModule({
         latestContentRef.current = newContent;
         scheduleAutoSave();
         setTimeout(() => {
-          textarea.setSelectionRange(selectionStart + 2, selectionEnd + 2);
+          editor.setSelectionRange(selectionStart + 2, selectionEnd + 2);
         }, 0);
       }
       return;
@@ -1183,7 +1160,7 @@ export function NotepadModule({
           latestContentRef.current = newContent;
           scheduleAutoSave();
           setTimeout(() => {
-            textarea.setSelectionRange(lineStart, lineStart);
+            editor.setSelectionRange(lineStart, lineStart);
           }, 0);
           return;
         }
@@ -1201,7 +1178,7 @@ export function NotepadModule({
         latestContentRef.current = newContent;
         scheduleAutoSave();
         setTimeout(() => {
-          textarea.setSelectionRange(selectionStart + continuation.length, selectionStart + continuation.length);
+          editor.setSelectionRange(selectionStart + continuation.length, selectionStart + continuation.length);
         }, 0);
         return;
       }
@@ -1224,7 +1201,7 @@ export function NotepadModule({
         scheduleAutoSave();
         setTimeout(() => {
           const newPos = lineStart + replacementLine.length;
-          textarea.setSelectionRange(newPos, newPos);
+          editor.setSelectionRange(newPos, newPos);
         }, 0);
         return;
       }
@@ -1243,7 +1220,7 @@ export function NotepadModule({
           latestContentRef.current = newContent;
           scheduleAutoSave();
           setTimeout(() => {
-            textarea.setSelectionRange(lineStart, lineStart);
+            editor.setSelectionRange(lineStart, lineStart);
           }, 0);
           return;
         }
@@ -1261,7 +1238,7 @@ export function NotepadModule({
         latestContentRef.current = newContent;
         scheduleAutoSave();
         setTimeout(() => {
-          textarea.setSelectionRange(selectionStart + continuation.length, selectionStart + continuation.length);
+          editor.setSelectionRange(selectionStart + continuation.length, selectionStart + continuation.length);
         }, 0);
         return;
       }
@@ -1279,7 +1256,7 @@ export function NotepadModule({
           latestContentRef.current = newContent;
           scheduleAutoSave();
           setTimeout(() => {
-            textarea.setSelectionRange(lineStart, lineStart);
+            editor.setSelectionRange(lineStart, lineStart);
           }, 0);
           return;
         }
@@ -1296,7 +1273,7 @@ export function NotepadModule({
         latestContentRef.current = newContent;
         scheduleAutoSave();
         setTimeout(() => {
-          textarea.setSelectionRange(selectionStart + continuation.length, selectionStart + continuation.length);
+          editor.setSelectionRange(selectionStart + continuation.length, selectionStart + continuation.length);
         }, 0);
         return;
       }
@@ -1314,7 +1291,7 @@ export function NotepadModule({
           latestContentRef.current = newContent;
           scheduleAutoSave();
           setTimeout(() => {
-            textarea.setSelectionRange(lineStart, lineStart);
+            editor.setSelectionRange(lineStart, lineStart);
           }, 0);
           return;
         }
@@ -1326,7 +1303,7 @@ export function NotepadModule({
         latestContentRef.current = newContent;
         scheduleAutoSave();
         setTimeout(() => {
-          textarea.setSelectionRange(selectionStart + continuation.length, selectionStart + continuation.length);
+          editor.setSelectionRange(selectionStart + continuation.length, selectionStart + continuation.length);
         }, 0);
         return;
       }
@@ -1363,7 +1340,7 @@ export function NotepadModule({
           scheduleAutoSave();
           setTimeout(() => {
             const newPos = lineStart + t.replaceWith.length;
-            textarea.setSelectionRange(newPos, newPos);
+            editor.setSelectionRange(newPos, newPos);
           }, 0);
           return;
         }
@@ -1371,11 +1348,8 @@ export function NotepadModule({
     }
   };
 
-  // Textarea Change Handler (debounced history snapshot & slash command detection & /--checkbox auto-transform)
-  const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const val = e.target.value;
-    const cursorPos = e.target.selectionStart;
-
+  // Markdown Editor Change Handler (debounced history snapshot & slash command detection & /--checkbox auto-transform)
+  const handleContentChange = (val: string, cursorPos: number) => {
     // Auto-detect and transform inline /--checkbox ... --/ syntax
     let nextVal = val;
     if (nextVal.includes("/--checkbox") && nextVal.includes("--/")) {
@@ -1419,18 +1393,20 @@ export function NotepadModule({
 
   // Text Selection Handler for Floating Bubble Toolbar
   const handleSelectText = () => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
+    const editor = markdownEditorRef.current;
+    if (!editor) return;
 
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const selected = currentContent.substring(start, end).trim();
+    const start = editor.selectionStart;
+    const end = editor.selectionEnd;
+    const selected = editor.value.substring(start, end).trim();
+    const coords = selected.length > 1 ? editor.getSelectionCoords() : null;
 
-    if (selected.length > 1) {
+    if (coords) {
       setBubbleToolbar({
         isOpen: true,
-        x: Math.min(window.innerWidth - 340, Math.max(300, window.innerWidth / 2 - 160)),
-        y: 120,
+        anchorX: (coords.left + coords.right) / 2,
+        anchorTop: coords.top,
+        anchorBottom: coords.bottom,
         selectedText: selected,
         start,
         end,
@@ -1440,9 +1416,25 @@ export function NotepadModule({
     }
   };
 
-  // Right-Click Context Menu for Selection AI (Supports Markdown mode textarea and Interactive mode lines / multi-line selection)
+  // Keep the selection toolbar on screen: centered above the selection, below it when there's
+  // no room above, and clamped to the viewport edges. Written straight to the DOM before paint.
+  const bubbleToolbarRef = React.useRef<HTMLDivElement>(null);
+  React.useLayoutEffect(() => {
+    const el = bubbleToolbarRef.current;
+    if (!bubbleToolbar || !el) return;
+    const margin = 8;
+    const { width, height } = el.getBoundingClientRect();
+    let top = bubbleToolbar.anchorTop - height - margin;
+    if (top < margin) top = bubbleToolbar.anchorBottom + margin;
+    top = Math.max(margin, Math.min(top, window.innerHeight - height - margin));
+    const left = Math.max(margin, Math.min(bubbleToolbar.anchorX - width / 2, window.innerWidth - width - margin));
+    el.style.left = `${left}px`;
+    el.style.top = `${top}px`;
+  }, [bubbleToolbar]);
+
+  // Right-Click Context Menu for Selection AI (Supports Markdown mode editor and Interactive mode lines / multi-line selection)
   const handleContextMenu = (
-    e: React.MouseEvent<HTMLTextAreaElement | HTMLInputElement | HTMLDivElement>,
+    e: React.MouseEvent<HTMLTextAreaElement | HTMLInputElement | HTMLDivElement> | MouseEvent,
     lineIdx?: number,
     lineType?: string,
     isChecked?: boolean
@@ -1484,12 +1476,12 @@ export function NotepadModule({
         }
       }
     } else {
-      // 3. Markdown mode textarea
-      const textarea = textareaRef.current || (target as HTMLTextAreaElement);
-      if (!textarea) return;
+      // 3. Markdown mode editor
+      const editor = markdownEditorRef.current;
+      if (!editor) return;
 
-      const selStart = textarea.selectionStart ?? 0;
-      const selEnd = textarea.selectionEnd ?? 0;
+      const selStart = editor.selectionStart ?? 0;
+      const selEnd = editor.selectionEnd ?? 0;
       if (selEnd > selStart) {
         selectedText = currentContent.substring(selStart, selEnd).trim();
         start = selStart;
@@ -1507,8 +1499,8 @@ export function NotepadModule({
     if (selectedText.length > 0) {
       e.preventDefault();
       e.stopPropagation();
-      const menuWidth = Math.min(290, window.innerWidth - 20);
-      const menuHeight = Math.min(460, window.innerHeight - 30);
+      const menuWidth = Math.min(230, window.innerWidth - 20);
+      const menuHeight = Math.min(290, window.innerHeight - 30);
       const x = Math.max(10, Math.min(e.clientX, window.innerWidth - menuWidth - 15));
       const y = Math.max(10, Math.min(e.clientY, window.innerHeight - menuHeight - 15));
 
@@ -1731,9 +1723,9 @@ export function NotepadModule({
           scheduleAutoSave();
 
           setTimeout(() => {
-            if (textareaRef.current) {
-              textareaRef.current.focus();
-              textareaRef.current.setSelectionRange(start ?? 0, (start ?? 0) + replacementText.length);
+            if (markdownEditorRef.current) {
+              markdownEditorRef.current.focus();
+              markdownEditorRef.current.setSelectionRange(start ?? 0, (start ?? 0) + replacementText.length);
             }
           }, 50);
         }
@@ -1789,29 +1781,18 @@ export function NotepadModule({
     scheduleAutoSave();
   };
 
-  // Markdown mode: a click that lands on a drawn checkbox toggles that task
-  const handleMarkdownCheckboxClick = (e: React.MouseEvent<HTMLTextAreaElement>) => {
-    const textarea = e.currentTarget;
-    const pos = textarea.selectionStart;
-    if (pos !== textarea.selectionEnd) return;
-
-    const lineStart = currentContent.lastIndexOf("\n", pos - 1) + 1;
-    const lineEndIdx = currentContent.indexOf("\n", pos);
+  // Markdown mode: clicking a drawn checkbox toggles the task on the line starting at lineStart
+  const toggleMarkdownTaskAt = (lineStart: number) => {
+    const lineEndIdx = currentContent.indexOf("\n", lineStart);
     const lineEnd = lineEndIdx === -1 ? currentContent.length : lineEndIdx;
     const line = currentContent.substring(lineStart, lineEnd);
     const task = line.match(MD_TASK_PREFIX);
     if (!task) return;
 
-    // The checkbox is drawn over the "[ ]" columns of the prefix; clicks elsewhere just place the caret
-    const col = pos - lineStart - task[1].length;
-    const boxCol = task[2].indexOf("[");
-    if (col < boxCol || col > boxCol + 2) return;
-
     const isChecked = task[3] === "x" || task[3] === "X";
     const newPrefix = isChecked ? "- [ ] " : "- [x] ";
     const newLine = task[1] + newPrefix + line.substring(task[0].length);
     const newFull = currentContent.substring(0, lineStart) + newLine + currentContent.substring(lineEnd);
-    const caretPos = lineStart + task[1].length + newPrefix.length;
 
     if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
     pushHistorySnapshot(currentContent);
@@ -1819,10 +1800,6 @@ export function NotepadModule({
     setCurrentContent(newFull);
     latestContentRef.current = newFull;
     scheduleAutoSave();
-
-    requestAnimationFrame(() => {
-      textarea.setSelectionRange(caretPos, caretPos);
-    });
   };
 
   // Update line text in Interactive Document mode
@@ -2224,11 +2201,11 @@ export function NotepadModule({
       return;
     }
 
-    const textarea = textareaRef.current;
-    if (!textarea) return;
+    const editor = markdownEditorRef.current;
+    if (!editor) return;
 
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
+    const start = editor.selectionStart;
+    const end = editor.selectionEnd;
     const formatted = presetText !== undefined ? `- [ ] ${presetText}\n` : "- [ ] ";
 
     const newContent = currentContent.substring(0, start) + formatted + currentContent.substring(end);
@@ -2241,9 +2218,9 @@ export function NotepadModule({
     scheduleAutoSave();
 
     setTimeout(() => {
-      textarea.focus();
+      editor.focus();
       const newPos = start + formatted.length;
-      textarea.setSelectionRange(newPos, newPos);
+      editor.setSelectionRange(newPos, newPos);
     }, 10);
   };
 
@@ -2814,102 +2791,21 @@ export function NotepadModule({
 
                     {/* AI Task Actions Dropdown Menu */}
                     {activeTaskAiMenu?.lineIdx === idx && (
-                      <div
-                        onClick={(e) => e.stopPropagation()}
-                        className="absolute right-0 top-full mt-1.5 z-50 w-64 sm:w-72 bg-white rounded-xl border-2 border-gray-200 p-1.5 shadow-xl space-y-1 animate-in fade-in zoom-in-95 duration-100 select-none text-left max-h-[min(340px,calc(100vh-140px))] overflow-y-auto"
-                      >
-                        <div className="px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wider text-gray-400 border-b border-gray-100 flex items-center justify-between">
-                          <span>Task AI Actions</span>
-                          <button
-                            type="button"
-                            onClick={() => setActiveTaskAiMenu(null)}
-                            className="text-gray-400 hover:text-gray-700 p-0.5 cursor-pointer"
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        </div>
-
-                        {[
-                          {
-                            id: "grammar",
-                            label: "Fix Grammar & Spelling",
-                            desc: "English grammar and spelling correction",
-                            icon: CheckCheck,
-                            color: "text-emerald-600 bg-emerald-50",
-                          },
-                          {
-                            id: "hinglish_to_english",
-                            label: "Translate Hinglish → English",
-                            desc: "Convert Hindi/Hinglish into formal English",
-                            icon: Languages,
-                            color: "text-blue-600 bg-blue-50",
-                          },
-                          {
-                            id: "english_to_hinglish",
-                            label: "Translate English → Hinglish",
-                            desc: "Convert English into conversational Hinglish",
-                            icon: Languages,
-                            color: "text-indigo-600 bg-indigo-50",
-                          },
-                          {
-                            id: "professional",
-                            label: "Company Standard / Professional",
-                            desc: "Formal corporate executive tone",
-                            icon: Briefcase,
-                            color: "text-purple-600 bg-purple-50",
-                          },
-                          {
-                            id: "english_to_simple",
-                            label: "Simplify for Client",
-                            desc: "Clear plain English explanation",
-                            icon: Smile,
-                            color: "text-amber-600 bg-amber-50",
-                          },
-                          {
-                            id: "make_short",
-                            label: "Make Shorter (Short Version)",
-                            desc: "Concise & punchy task text",
-                            icon: Scissors,
-                            color: "text-rose-600 bg-rose-50",
-                          },
-                          {
-                            id: "execute_task",
-                            label: isEmailTask ? "Draft Email Deliverable" : "Generate Task Deliverable",
-                            desc: isEmailTask ? "Full email template with subject & body" : "Draft AI solution or template modal",
-                            icon: isEmailTask ? Mail : Sparkles,
-                            color: "text-amber-700 bg-amber-100",
-                          },
-                        ].map((action) => {
-                          const Icon = action.icon;
-                          return (
-                            <button
-                              key={action.id}
-                              type="button"
-                              onClick={() => {
-                                setActiveTaskAiMenu(null);
-                                if (action.id === "execute_task") {
-                                  handleExecuteTaskWithAi(taskText, idx);
-                                } else {
-                                  handleApplyAiToTaskLabel(action.id, taskText, idx);
-                                }
-                              }}
-                              className="group/item w-full text-left p-1.5 rounded-lg hover:bg-blue-50/80 transition flex items-start gap-2.5 cursor-pointer"
-                            >
-                              <div className={cn("p-1 rounded shrink-0 mt-0.5", action.color)}>
-                                <Icon className="w-3.5 h-3.5" />
-                              </div>
-                              <div className="min-w-0">
-                                <div className="text-xs font-bold text-gray-900 group-hover/item:text-blue-600 leading-tight">
-                                  {action.label}
-                                </div>
-                                <div className="text-[10px] text-gray-400 group-hover/item:text-gray-600 font-medium truncate mt-0.5">
-                                  {action.desc}
-                                </div>
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
+                      <AiActionMenu
+                        title="Task AI Actions"
+                        entries={taskMenuEntries(isEmailTask)}
+                        onSelect={(actionId) => {
+                          setActiveTaskAiMenu(null);
+                          if (actionId === "execute_task") {
+                            handleExecuteTaskWithAi(taskText, idx);
+                          } else {
+                            handleApplyAiToTaskLabel(actionId, taskText, idx);
+                          }
+                        }}
+                        onClose={() => setActiveTaskAiMenu(null)}
+                        submenuSide="left"
+                        className="absolute right-0 top-full mt-1.5 z-50"
+                      />
                     )}
                   </div>
 
@@ -3661,29 +3557,22 @@ export function NotepadModule({
               </div>
             )}
 
-            {/* 2. Markdown Editor View: transparent textarea over a styled layer that draws bullets & checkboxes */}
+            {/* 2. Markdown Editor View: free typing with live preview (real headings, checkboxes, bullets) */}
             {viewMode === "markdown" && (
               <div className="flex-1 flex flex-col p-4 sm:p-6 relative overflow-hidden bg-white">
-                <div className="flex-1 min-h-0 overflow-y-auto rounded-xl bg-[#F8FAFC] border-2 border-transparent focus-within:bg-white focus-within:border-[#3B82F6] transition-colors">
-                  <div className="relative min-h-full">
-                    <div
-                      aria-hidden="true"
-                      className="md-live-backdrop min-h-full p-4 sm:p-5 font-mono text-sm leading-relaxed text-gray-900 whitespace-pre-wrap break-words pointer-events-none select-none"
-                    >
-                      <MarkdownLiveBackdrop content={currentContent} />
-                    </div>
-                    <textarea
-                      ref={textareaRef}
-                      value={currentContent}
-                      onChange={handleContentChange}
-                      onKeyDown={handleEditorKeyDown}
-                      onSelect={handleSelectText}
-                      onClick={handleMarkdownCheckboxClick}
-                      onContextMenu={handleContextMenu}
-                      placeholder="Start typing your notes...&#10;&#10;✨ Shortcuts:&#10;• Type '/--checkbox create email templete --/' for Instant Checkbox&#10;• Type '/' for Notion-Style Slash Commands&#10;• Type '- ' for Bullet Points&#10;• Type '1. ' for Numbered Lists&#10;• Type '[] ' for To-Do Checklist&#10;• Type '# ' for Large Heading"
-                      className="absolute inset-0 w-full h-full p-4 sm:p-5 font-mono text-sm leading-relaxed whitespace-pre-wrap break-words bg-transparent text-transparent caret-gray-900 placeholder:text-gray-400 border-none outline-none resize-none overflow-hidden selection:bg-blue-200/60"
-                    />
-                  </div>
+                <div className="flex-1 min-h-0 overflow-hidden rounded-xl bg-[#F8FAFC] border-2 border-transparent focus-within:bg-white focus-within:border-[#3B82F6] transition-colors">
+                  <MarkdownLiveEditor
+                    handleRef={markdownEditorRef}
+                    value={currentContent}
+                    onChange={handleContentChange}
+                    onKeyDown={handleEditorKeyDown}
+                    onSelectionChange={handleSelectText}
+                    onContextMenu={handleContextMenu}
+                    onToggleTask={toggleMarkdownTaskAt}
+                    onScroll={() => setBubbleToolbar(null)}
+                    placeholder={"Start typing your notes...\n\n✨ Shortcuts:\n• Type '/--checkbox create email templete --/' for Instant Checkbox\n• Type '/' for Notion-Style Slash Commands\n• Type '- ' for Bullet Points\n• Type '1. ' for Numbered Lists\n• Type '[] ' for To-Do Checklist\n• Type '# ' for Large Heading"}
+                    className="md-live-editor h-full font-sans text-sm"
+                  />
                 </div>
               </div>
             )}
@@ -3758,14 +3647,14 @@ export function NotepadModule({
           {/* 🫧 Floating Bubble Toolbar on Selection */}
           {bubbleToolbar && bubbleToolbar.isOpen && (
             <div
-              style={{ top: `${bubbleToolbar.y}px`, left: `${bubbleToolbar.x}px` }}
-              className="absolute z-40 bg-[#111827] text-white px-2 py-1.5 rounded-xl border border-gray-700 shadow-2xl flex items-center gap-1 animate-in fade-in zoom-in-95 duration-100 select-none"
+              ref={bubbleToolbarRef}
+              className="fixed z-50 max-w-[calc(100vw-16px)] bg-white text-gray-700 p-1 rounded-xl border-2 border-gray-200 shadow-xl flex flex-wrap items-center gap-0.5 select-none"
               onClick={(e) => e.stopPropagation()}
             >
               <button
                 type="button"
                 onClick={() => applyFormatting("**", "**")}
-                className="p-1.5 rounded hover:bg-gray-800 text-gray-200 font-bold transition cursor-pointer"
+                className="p-1.5 rounded-md hover:bg-blue-50 hover:text-[#3B82F6] transition cursor-pointer"
                 title="Bold (Ctrl+B)"
               >
                 <Bold className="w-3.5 h-3.5" />
@@ -3773,7 +3662,7 @@ export function NotepadModule({
               <button
                 type="button"
                 onClick={() => applyFormatting("*", "*")}
-                className="p-1.5 rounded hover:bg-gray-800 text-gray-200 italic transition cursor-pointer"
+                className="p-1.5 rounded-md hover:bg-blue-50 hover:text-[#3B82F6] transition cursor-pointer"
                 title="Italic (Ctrl+I)"
               >
                 <Italic className="w-3.5 h-3.5" />
@@ -3781,16 +3670,16 @@ export function NotepadModule({
               <button
                 type="button"
                 onClick={() => handleAiActionOnSelection("convert_to_checkbox")}
-                className="p-1.5 rounded hover:bg-gray-800 text-blue-400 font-bold transition flex items-center gap-1 text-xs cursor-pointer"
+                className="px-1.5 py-1 rounded-md hover:bg-blue-50 hover:text-[#3B82F6] font-semibold transition flex items-center gap-1 text-xs cursor-pointer"
                 title="Convert selection to Task Checkbox"
               >
                 <CheckSquare className="w-3.5 h-3.5" />
-                <span className="text-[10px]">Checkbox</span>
+                <span>Task</span>
               </button>
               <button
                 type="button"
                 onClick={() => applyFormatting("`", "`")}
-                className="p-1.5 rounded hover:bg-gray-800 text-emerald-400 font-mono transition cursor-pointer"
+                className="p-1.5 rounded-md hover:bg-blue-50 hover:text-[#3B82F6] transition cursor-pointer"
                 title="Inline Code"
               >
                 <Code className="w-3.5 h-3.5" />
@@ -3798,40 +3687,40 @@ export function NotepadModule({
               <button
                 type="button"
                 onClick={() => applyFormatting("==", "==")}
-                className="p-1.5 rounded hover:bg-gray-800 text-amber-400 transition cursor-pointer"
+                className="p-1.5 rounded-md hover:bg-blue-50 hover:text-[#3B82F6] transition cursor-pointer"
                 title="Highlight"
               >
                 <Highlighter className="w-3.5 h-3.5" />
               </button>
 
-              <div className="w-px h-4 bg-gray-700 mx-1" />
+              <div className="w-px h-4 bg-gray-200 mx-1" />
 
               <button
                 type="button"
                 onClick={() => handleAiActionOnSelection("execute_task")}
                 disabled={isAiProcessingSelection}
-                className="px-2 py-1 rounded bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 text-xs font-bold flex items-center gap-1 transition cursor-pointer"
+                className="px-2 py-1 rounded-md hover:bg-blue-50 hover:text-[#3B82F6] text-xs font-semibold flex items-center gap-1 transition cursor-pointer disabled:opacity-50"
                 title="AI: Generate Deliverable (Email template, etc.)"
               >
                 {isAiProcessingSelection && activeAiAction === "execute_task" ? (
-                  <Loader2 className="w-3 h-3 animate-spin text-amber-400" />
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-[#3B82F6]" />
                 ) : (
-                  <Sparkles className="w-3 h-3 text-amber-400" />
+                  <Sparkles className="w-3.5 h-3.5 text-[#3B82F6]" />
                 )}
-                <span>AI Deliverable</span>
+                <span>Deliverable</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => handleAiActionOnSelection("make_short")}
                 disabled={isAiProcessingSelection}
-                className="px-2 py-1 rounded bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 text-xs font-bold flex items-center gap-1 transition cursor-pointer"
+                className="px-2 py-1 rounded-md hover:bg-blue-50 hover:text-[#3B82F6] text-xs font-semibold flex items-center gap-1 transition cursor-pointer disabled:opacity-50"
                 title="Make selection shorter and concise"
               >
                 {isAiProcessingSelection && activeAiAction === "make_short" ? (
-                  <Loader2 className="w-3 h-3 animate-spin text-rose-400" />
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-[#3B82F6]" />
                 ) : (
-                  <Scissors className="w-3 h-3 text-rose-400" />
+                  <Scissors className="w-3.5 h-3.5" />
                 )}
                 <span>Shorten</span>
               </button>
@@ -3840,138 +3729,18 @@ export function NotepadModule({
 
           {/* Right-Click AI Menu on Selection */}
           {contextMenu && contextMenu.isOpen && (
-            <div
-              style={{
-                top: `${contextMenu.y}px`,
-                left: `${contextMenu.x}px`,
-                maxHeight: "calc(100vh - 24px)",
-              }}
-              className="fixed z-50 w-72 sm:w-80 bg-[#111827] text-white rounded-xl border-2 border-gray-700 p-2 shadow-2xl animate-in fade-in zoom-in-95 duration-100 select-none flex flex-col"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {/* Header */}
-              <div className="px-2.5 py-1.5 border-b border-gray-800 flex items-center justify-between gap-2 shrink-0">
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                  <div className="min-w-0">
-                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-400 block">
-                      AI & Task Actions
-                    </span>
-                    <span className="text-xs text-gray-300 font-medium truncate block max-w-[180px]">
-                      "{contextMenu.selectedText}"
-                    </span>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setContextMenu(null)}
-                  className="p-1 text-gray-400 hover:text-white rounded cursor-pointer"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-
-              {/* Actions List with smooth scrolling and compact padding */}
-              <div className="py-1 space-y-0.5 overflow-y-auto max-h-[min(380px,calc(100vh-120px))] pr-0.5">
-                {[
-                  {
-                    id: "convert_to_checkbox",
-                    label: "Convert to Task Checkbox",
-                    desc: "Turn into interactive - [ ] task",
-                    icon: CheckSquare,
-                    color: "text-blue-400 bg-blue-950/60",
-                  },
-                  {
-                    id: "execute_task",
-                    label: "Generate Task Deliverable",
-                    desc: "Email draft, template, or code",
-                    icon: Sparkles,
-                    color: "text-amber-400 bg-amber-950/60",
-                  },
-                  {
-                    id: "make_short",
-                    label: "Make Shorter (Short Version)",
-                    desc: "Short, concise & punchy",
-                    icon: Scissors,
-                    color: "text-rose-400 bg-rose-950/60",
-                  },
-                  {
-                    id: "hinglish_to_english",
-                    label: "Translate Hinglish → English",
-                    desc: "Hindi/Hinglish to standard English",
-                    icon: Languages,
-                    color: "text-blue-400 bg-blue-950/60",
-                  },
-                  {
-                    id: "english_to_hinglish",
-                    label: "Translate English → Hinglish",
-                    desc: "English to natural conversational Hinglish",
-                    icon: Languages,
-                    color: "text-indigo-400 bg-indigo-950/60",
-                  },
-                  {
-                    id: "professional",
-                    label: "Corporate Professional Tone",
-                    desc: "Formal executive business tone",
-                    icon: Briefcase,
-                    color: "text-purple-400 bg-purple-950/60",
-                  },
-                  {
-                    id: "grammar",
-                    label: "Fix Grammar & Spelling",
-                    desc: "Fix typos, tense & sentence flow",
-                    icon: CheckCheck,
-                    color: "text-emerald-400 bg-emerald-950/60",
-                  },
-                  {
-                    id: "english_to_simple",
-                    label: "Simplify for Client",
-                    desc: "Easy, crystal clear explanation",
-                    icon: Smile,
-                    color: "text-amber-400 bg-amber-950/60",
-                  },
-                  {
-                    id: "summarize",
-                    label: "Summarize Selection",
-                    desc: "Crisp bullet points summary",
-                    icon: FileText,
-                    color: "text-indigo-400 bg-indigo-950/60",
-                  },
-                ].map((action) => {
-                  const Icon = action.icon;
-                  const isCurrentAction = isAiProcessingSelection && activeAiAction === action.id;
-                  return (
-                    <button
-                      key={action.id}
-                      disabled={isAiProcessingSelection}
-                      onClick={() => handleAiActionOnSelection(action.id)}
-                      className="w-full text-left p-1.5 rounded-lg hover:bg-gray-800/90 transition-all flex items-center gap-2 group cursor-pointer disabled:opacity-50"
-                    >
-                      <div className={cn("p-1 rounded transition shrink-0", action.color)}>
-                        {isCurrentAction ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400" />
-                        ) : (
-                          <Icon className="w-3.5 h-3.5" />
-                        )}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="text-xs font-bold text-gray-100 group-hover:text-amber-300 leading-tight">
-                          {action.label}
-                        </div>
-                        <div className="text-[10px] text-gray-400 font-medium truncate">
-                          {action.desc}
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Footer */}
-              <div className="px-2.5 py-1 border-t border-gray-800 text-[10px] text-gray-400 font-medium flex items-center justify-between shrink-0">
-                <span>Selected text will be replaced</span>
-                <span className="text-[9px] bg-gray-800 px-1.5 py-0.5 rounded text-gray-300">Esc to close</span>
-              </div>
-            </div>
+            <AiActionMenu
+              title="AI & Task Actions"
+              subtitle={contextMenu.selectedText}
+              entries={SELECTION_MENU}
+              onSelect={handleAiActionOnSelection}
+              onClose={() => setContextMenu(null)}
+              loadingActionId={isAiProcessingSelection ? activeAiAction : null}
+              disabled={isAiProcessingSelection}
+              footer="Replaces the selected text · Esc to close"
+              style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}
+              className="fixed z-50"
+            />
           )}
         </div>
       ) : (

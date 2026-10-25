@@ -35,11 +35,11 @@
   }
 
   /* Standard text-sm on all form controls & prevent mobile auto-zoom.
-     .md-live-backdrop is the layer drawn behind the Markdown editor textarea and must match its font size. */
+     .md-live-editor is the Markdown view's editor (contenteditable), which iOS zooms into just like a textarea. */
   input:not([type="checkbox"]):not([type="radio"]),
   select,
   textarea,
-  .md-live-backdrop {
+  .md-live-editor {
     font-size: 0.875rem; /* text-sm standard (14px) */
   }
 
@@ -47,7 +47,7 @@
     input:not([type="checkbox"]):not([type="radio"]),
     select,
     textarea,
-    .md-live-backdrop {
+    .md-live-editor {
       font-size: 16px !important; /* 16px prevents iOS Safari automatic viewport zooming */
     }
   }
