@@ -834,7 +834,7 @@ Schedule follow-up sprint demo for next Tuesday 4 PM.`,
                 context="Daily task action item"
                 variant="ghost"
                 size="sm"
-                allowedActions={["hinglish_to_english", "professional", "make_short", "grammar", "english_to_simple"]}
+                allowedActions={["hinglish_to_english", "english_to_hinglish", "professional", "make_short", "grammar", "english_to_simple"]}
               />
             </div>
           </div>

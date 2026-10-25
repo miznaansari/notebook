@@ -51,7 +51,6 @@ import {
   Zap,
   Play,
   Send,
-  Layers,
   ListCheck,
   PenTool,
   CornerDownLeft,
@@ -116,6 +115,77 @@ interface FloatingBubbleState {
   end: number;
 }
 
+// Line prefixes that the Markdown editor draws as real bullets / checkboxes instead of raw syntax
+const MD_TASK_PREFIX = /^(\s*)(-\s*\[([ xX])?\]\s?)/;
+const MD_BULLET_PREFIX = /^(\s*)([-*•])(\s)/;
+
+// Titles that mean the user never named the note, so AI may name it
+const DEFAULT_NOTE_TITLES = ["", "new note", "untitled note", "untitled"];
+
+// Styled layer rendered behind the transparent Markdown textarea. It keeps every raw
+// character (prefixes are only made transparent) so wrapping and caret positions line up exactly.
+function MarkdownLiveBackdrop({ content }: { content: string }) {
+  const lines = content.split("\n");
+  return (
+    <>
+      {lines.map((line, idx) => {
+        const lineBreak = idx < lines.length - 1 ? "\n" : "";
+
+        const task = line.match(MD_TASK_PREFIX);
+        if (task) {
+          const isChecked = task[3] === "x" || task[3] === "X";
+          return (
+            <React.Fragment key={idx}>
+              {task[1]}
+              <span className="relative text-transparent">
+                {task[2]}
+                <span
+                  style={{ left: `${task[2].indexOf("[")}ch` }}
+                  className={cn(
+                    "absolute top-1/2 -translate-y-1/2 w-3.5 h-3.5 rounded border-2 flex items-center justify-center",
+                    isChecked ? "bg-[#3B82F6] border-[#3B82F6] text-white" : "border-gray-400 bg-white"
+                  )}
+                >
+                  {isChecked && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                </span>
+              </span>
+              <span className={isChecked ? "line-through text-gray-400" : undefined}>
+                {line.slice(task[0].length)}
+              </span>
+              {lineBreak}
+            </React.Fragment>
+          );
+        }
+
+        const bullet = line.match(MD_BULLET_PREFIX);
+        if (bullet) {
+          return (
+            <React.Fragment key={idx}>
+              {bullet[1]}
+              <span className="relative text-transparent">
+                {bullet[2]}
+                <span className="absolute left-0.5 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-[#3B82F6]" />
+              </span>
+              {bullet[3]}
+              {line.slice(bullet[0].length)}
+              {lineBreak}
+            </React.Fragment>
+          );
+        }
+
+        return (
+          <React.Fragment key={idx}>
+            {line}
+            {lineBreak}
+          </React.Fragment>
+        );
+      })}
+      {/* Keeps a trailing empty line the same height as in the textarea */}
+      {" "}
+    </>
+  );
+}
+
 export function NotepadModule({
   projectId,
   notes,
@@ -133,7 +203,7 @@ export function NotepadModule({
   const [currentTags, setCurrentTags] = React.useState("");
   const [isPinned, setIsPinned] = React.useState(false);
   const [saveStatus, setSaveStatus] = React.useState<"saved" | "saving" | "unsaved">("saved");
-  const [viewMode, setViewMode] = React.useState<"interactive" | "markdown" | "split">("interactive");
+  const [viewMode, setViewMode] = React.useState<"interactive" | "markdown">("interactive");
   const [searchNotes, setSearchNotes] = React.useState("");
   const [mobileView, setMobileView] = React.useState<"list" | "editor">(notes.length > 0 ? "editor" : "list");
 
@@ -142,6 +212,17 @@ export function NotepadModule({
   const descAiTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
   const isGeneratingDescRef = React.useRef(false);
   const latestDescriptionRef = React.useRef<string | null>(null);
+  // Titles the AI wrote this session, so later tiers may refine them without touching user-typed titles
+  const aiTitlesRef = React.useRef<{ [noteId: string]: string }>({});
+  const [isGeneratingTitle, setIsGeneratingTitle] = React.useState(false);
+
+  // Latest props for async callbacks and the unmount flush, which would otherwise see stale closures
+  const notesRef = React.useRef(notes);
+  const onNotesChangeRef = React.useRef(onNotesChange);
+  React.useEffect(() => {
+    notesRef.current = notes;
+    onNotesChangeRef.current = onNotesChange;
+  });
 
   // Undo / Redo history stack tracking
   const [history, setHistory] = React.useState<string[]>([]);
@@ -237,48 +318,90 @@ export function NotepadModule({
     return 0;
   };
 
-  // Trigger AI to generate / refine note description
-  const triggerAiDescriptionGeneration = React.useCallback(
-    async (noteId: string, title: string, content: string, targetTier: number) => {
-      if (!noteId || isGeneratingDescRef.current) return;
+  // Trigger AI to generate / refine the note description, and the title too while the note is
+  // still unnamed (or still carries a title the AI wrote earlier). forceTitle renames regardless.
+  const triggerAiNoteMetaGeneration = React.useCallback(
+    async (
+      noteId: string,
+      title: string,
+      content: string,
+      targetTier: number,
+      forceTitle = false
+    ): Promise<string | null> => {
+      if (!noteId || isGeneratingDescRef.current) return null;
       isGeneratingDescRef.current = true;
+      const wantsTitle =
+        forceTitle ||
+        DEFAULT_NOTE_TITLES.includes(title.trim().toLowerCase()) ||
+        aiTitlesRef.current[noteId] === title;
       try {
         const res = await fetch("/api/ai", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            action: "generate_note_description",
+            action: wantsTitle ? "generate_note_meta" : "generate_note_description",
             text: content.slice(0, 3000),
             context: title || "Untitled Note",
           }),
         });
+        if (!res.ok) return null;
 
-        if (res.ok) {
-          const data = await res.json();
-          const generatedDesc = data.result?.trim();
+        const data = await res.json();
+        // generate_note_meta falls back to a raw string when the model's JSON can't be parsed; ignore that
+        const meta =
+          data.result && typeof data.result === "object"
+            ? data.result
+            : wantsTitle
+              ? {}
+              : { description: data.result };
+        const generatedDesc = typeof meta.description === "string" ? meta.description.trim() : "";
+
+        // Skip the AI title if the user typed their own while the request was running
+        const titleNow =
+          latestActiveIdRef.current === noteId
+            ? latestTitleRef.current
+            : notesRef.current.find((n) => n.id === noteId)?.title ?? title;
+        const generatedTitle =
+          wantsTitle && titleNow === title && typeof meta.title === "string"
+            ? meta.title.trim().replace(/^["']|["']$/g, "")
+            : "";
+
+        if (!generatedDesc && !generatedTitle) return null;
+
+        const patch: Partial<NoteItem> = {};
+        if (generatedDesc) {
+          noteDescTiersRef.current[noteId] = targetTier;
+          patch.description = generatedDesc;
+        }
+        if (generatedTitle) {
+          aiTitlesRef.current[noteId] = generatedTitle;
+          patch.title = generatedTitle;
+        }
+        if (latestActiveIdRef.current === noteId) {
           if (generatedDesc) {
-            noteDescTiersRef.current[noteId] = targetTier;
-            if (latestActiveIdRef.current === noteId) {
-              setCurrentDescription(generatedDesc);
-              latestDescriptionRef.current = generatedDesc;
-            }
-            onNotesChange(
-              notes.map((n) => (n.id === noteId ? { ...n, description: generatedDesc } : n))
-            );
-            await fetch(`/api/projects/${projectId}/notes/${noteId}`, {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ description: generatedDesc }),
-            });
+            setCurrentDescription(generatedDesc);
+            latestDescriptionRef.current = generatedDesc;
+          }
+          if (generatedTitle) {
+            setCurrentTitle(generatedTitle);
+            latestTitleRef.current = generatedTitle;
           }
         }
+        onNotesChange(notesRef.current.map((n) => (n.id === noteId ? { ...n, ...patch } : n)));
+        await fetch(`/api/projects/${projectId}/notes/${noteId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+        });
+        return generatedTitle || null;
       } catch (err) {
-        console.error("Auto description generation failed:", err);
+        console.error("Auto note title/description generation failed:", err);
+        return null;
       } finally {
         isGeneratingDescRef.current = false;
       }
     },
-    [projectId, notes, onNotesChange]
+    [projectId, onNotesChange]
   );
 
   // Check word count tier and handle reset on erase or trigger on word thresholds
@@ -317,11 +440,11 @@ export function NotepadModule({
           clearTimeout(descAiTimeoutRef.current);
         }
         descAiTimeoutRef.current = setTimeout(() => {
-          triggerAiDescriptionGeneration(noteId, title, content, tier);
+          triggerAiNoteMetaGeneration(noteId, title, content, tier);
         }, 1000);
       }
     },
-    [notes, onNotesChange, triggerAiDescriptionGeneration]
+    [notes, onNotesChange, triggerAiNoteMetaGeneration]
   );
 
   // Flush pending save immediately to server
@@ -513,14 +636,42 @@ export function NotepadModule({
     }
   }, [currentContent, pendingFocus]);
 
-  // Clean up on unmount
+  // Clean up on unmount. Switching project or tab unmounts the editor, so an edit still waiting
+  // for auto-save is written right away instead of being dropped with the timer.
   React.useEffect(() => {
     return () => {
       if (autoSaveTimeoutRef.current) clearTimeout(autoSaveTimeoutRef.current);
       if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
       if (descAiTimeoutRef.current) clearTimeout(descAiTimeoutRef.current);
+
+      const noteId = latestActiveIdRef.current;
+      const saved = notesRef.current.find((n) => n.id === noteId);
+      if (!noteId || !saved) return;
+
+      const local = {
+        title: latestTitleRef.current.trim() || "Untitled Note",
+        content: latestContentRef.current,
+        description: latestDescriptionRef.current,
+        tags: latestTagsRef.current,
+        isPinned: latestPinnedRef.current,
+      };
+      const isDirty =
+        local.title !== saved.title ||
+        local.content !== saved.content ||
+        local.tags !== (saved.tags || "") ||
+        local.isPinned !== saved.isPinned ||
+        local.description !== (saved.description || null);
+      if (!isDirty) return;
+
+      onNotesChangeRef.current(notesRef.current.map((n) => (n.id === noteId ? { ...n, ...local } : n)));
+      fetch(`/api/projects/${projectId}/notes/${noteId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(local),
+        keepalive: true,
+      }).catch((err) => console.error("Failed to flush note on unmount:", err));
     };
-  }, []);
+  }, [projectId]);
 
   // Global Keyboard Shortcuts (Ctrl+S, Ctrl+Z, Ctrl+Y, Ctrl+C, Ctrl+X, Backspace, Escape)
   React.useEffect(() => {
@@ -1638,6 +1789,42 @@ export function NotepadModule({
     scheduleAutoSave();
   };
 
+  // Markdown mode: a click that lands on a drawn checkbox toggles that task
+  const handleMarkdownCheckboxClick = (e: React.MouseEvent<HTMLTextAreaElement>) => {
+    const textarea = e.currentTarget;
+    const pos = textarea.selectionStart;
+    if (pos !== textarea.selectionEnd) return;
+
+    const lineStart = currentContent.lastIndexOf("\n", pos - 1) + 1;
+    const lineEndIdx = currentContent.indexOf("\n", pos);
+    const lineEnd = lineEndIdx === -1 ? currentContent.length : lineEndIdx;
+    const line = currentContent.substring(lineStart, lineEnd);
+    const task = line.match(MD_TASK_PREFIX);
+    if (!task) return;
+
+    // The checkbox is drawn over the "[ ]" columns of the prefix; clicks elsewhere just place the caret
+    const col = pos - lineStart - task[1].length;
+    const boxCol = task[2].indexOf("[");
+    if (col < boxCol || col > boxCol + 2) return;
+
+    const isChecked = task[3] === "x" || task[3] === "X";
+    const newPrefix = isChecked ? "- [ ] " : "- [x] ";
+    const newLine = task[1] + newPrefix + line.substring(task[0].length);
+    const newFull = currentContent.substring(0, lineStart) + newLine + currentContent.substring(lineEnd);
+    const caretPos = lineStart + task[1].length + newPrefix.length;
+
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    pushHistorySnapshot(currentContent);
+    pushHistorySnapshot(newFull);
+    setCurrentContent(newFull);
+    latestContentRef.current = newFull;
+    scheduleAutoSave();
+
+    requestAnimationFrame(() => {
+      textarea.setSelectionRange(caretPos, caretPos);
+    });
+  };
+
   // Update line text in Interactive Document mode
   const updateLineContent = (lineIndex: number, newText: string, lineType: string, isChecked?: boolean) => {
     const lines = currentContent.split("\n");
@@ -2065,6 +2252,29 @@ export function NotepadModule({
     setCurrentTitle(val);
     latestTitleRef.current = val;
     scheduleAutoSave();
+  };
+
+  const handleGenerateTitle = async () => {
+    if (!activeNoteId || isGeneratingTitle) return;
+    if (countWords(latestContentRef.current.replace(/^#\s*New Note\s*$/m, "")) < 3) {
+      toast.error("Write a few words in the note first");
+      return;
+    }
+    setIsGeneratingTitle(true);
+    try {
+      const words = countWords(latestContentRef.current);
+      const title = await triggerAiNoteMetaGeneration(
+        activeNoteId,
+        latestTitleRef.current,
+        latestContentRef.current,
+        Math.max(getWordTier(words), noteDescTiersRef.current[activeNoteId] || 0),
+        true
+      );
+      if (title) toast.success("AI named this note");
+      else toast.error("AI couldn't generate a title right now");
+    } finally {
+      setIsGeneratingTitle(false);
+    }
   };
 
   const handleTagsChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2583,7 +2793,7 @@ export function NotepadModule({
                         setActiveTaskAiMenu(activeTaskAiMenu?.lineIdx === idx ? null : { lineIdx: idx, taskText });
                       }}
                       disabled={isThisExecuting || taskAiLoadingIdx === idx}
-                      title="AI Tools (Grammar, Hinglish → English, Professional, Deliverables)"
+                      title="AI Tools (Grammar, Hinglish ↔ English, Professional, Deliverables)"
                       className={cn(
                         "flex items-center gap-1 px-2 py-0.5 rounded text-[11px] sm:text-xs font-bold transition border cursor-pointer shadow-xs whitespace-nowrap",
                         isEmailTask
@@ -2633,6 +2843,13 @@ export function NotepadModule({
                             desc: "Convert Hindi/Hinglish into formal English",
                             icon: Languages,
                             color: "text-blue-600 bg-blue-50",
+                          },
+                          {
+                            id: "english_to_hinglish",
+                            label: "Translate English → Hinglish",
+                            desc: "Convert English into conversational Hinglish",
+                            icon: Languages,
+                            color: "text-indigo-600 bg-indigo-50",
                           },
                           {
                             id: "professional",
@@ -3089,13 +3306,28 @@ export function NotepadModule({
                 </button>
 
                 <div className="flex-1 min-w-0">
-                  <input
-                    type="text"
-                    value={currentTitle}
-                    onChange={handleTitleChange}
-                    placeholder="Note Title..."
-                    className="w-full text-base sm:text-2xl font-extrabold text-gray-900 border-none outline-none placeholder:text-gray-300 bg-transparent truncate"
-                  />
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={currentTitle}
+                      onChange={handleTitleChange}
+                      placeholder="Note Title..."
+                      className="flex-1 min-w-0 text-base sm:text-2xl font-extrabold text-gray-900 border-none outline-none placeholder:text-gray-300 bg-transparent truncate"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleGenerateTitle}
+                      disabled={isGeneratingTitle}
+                      title="Generate title with AI"
+                      className="p-1 rounded-md text-blue-600 hover:bg-blue-50 disabled:opacity-60 transition cursor-pointer shrink-0"
+                    >
+                      {isGeneratingTitle ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Sparkles className="w-4 h-4" />
+                      )}
+                    </button>
+                  </div>
                   <div className="flex items-center gap-1.5 mt-0.5">
                     <Tag className="w-3 h-3 text-gray-400 shrink-0" />
                     <input
@@ -3412,24 +3644,10 @@ export function NotepadModule({
                     ? "bg-[#3B82F6] text-white"
                     : "text-gray-600 hover:text-gray-900"
                 )}
-                title="Raw Markdown Textarea"
+                title="Free-typing Markdown editor with live bullets & checkboxes"
               >
                 <PenTool className="w-3 h-3" />
                 <span>Markdown</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode("split")}
-                className={cn(
-                  "hidden md:flex items-center gap-1 px-2.5 py-0.5 text-xs font-bold rounded transition cursor-pointer whitespace-nowrap",
-                  viewMode === "split"
-                    ? "bg-[#3B82F6] text-white"
-                    : "text-gray-600 hover:text-gray-900"
-                )}
-                title="Split side-by-side view"
-              >
-                <Layers className="w-3 h-3" />
-                <span>Split</span>
               </button>
             </div>
           </div>
@@ -3443,49 +3661,31 @@ export function NotepadModule({
               </div>
             )}
 
-            {/* 2. Raw Markdown Textarea View */}
+            {/* 2. Markdown Editor View: transparent textarea over a styled layer that draws bullets & checkboxes */}
             {viewMode === "markdown" && (
               <div className="flex-1 flex flex-col p-4 sm:p-6 relative overflow-hidden bg-white">
-                <textarea
-                  ref={textareaRef}
-                  value={currentContent}
-                  onChange={handleContentChange}
-                  onKeyDown={handleEditorKeyDown}
-                  onSelect={handleSelectText}
-                  onContextMenu={handleContextMenu}
-                  placeholder="Start typing your notes...&#10;&#10;✨ Shortcuts:&#10;• Type '/--checkbox create email templete --/' for Instant Checkbox&#10;• Type '/' for Notion-Style Slash Commands&#10;• Type '- ' for Bullet Points&#10;• Type '1. ' for Numbered Lists&#10;• Type '[] ' for To-Do Checklist&#10;• Type '# ' for Large Heading"
-                  className="w-full flex-1 h-full min-h-0 p-4 sm:p-5 rounded-xl bg-[#F8FAFC] text-gray-900 font-mono text-sm leading-relaxed border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] resize-none selection:bg-blue-100"
-                />
-              </div>
-            )}
-
-            {/* 3. Split Mode: Textarea + Live Interactive Document */}
-            {viewMode === "split" && (
-              <>
-                <div className="flex-1 flex flex-col p-4 sm:p-6 relative overflow-hidden bg-white border-r-2 border-gray-200 md:w-1/2">
-                  <textarea
-                    ref={textareaRef}
-                    value={currentContent}
-                    onChange={handleContentChange}
-                    onKeyDown={handleEditorKeyDown}
-                    onSelect={handleSelectText}
-                    onContextMenu={handleContextMenu}
-                    placeholder="Start typing your notes..."
-                    className="w-full flex-1 h-full min-h-0 p-4 rounded-xl bg-[#F8FAFC] text-gray-900 font-mono text-sm leading-relaxed border-2 border-transparent outline-none focus:bg-white focus:border-[#3B82F6] resize-none"
-                  />
-                </div>
-                <div className="flex-1 p-6 sm:p-8 overflow-y-auto bg-white md:w-1/2">
-                  <div className="max-w-3xl mx-auto">
-                    <div className="flex items-center gap-2 mb-4 pb-2 border-b-2 border-gray-100">
-                      <span className="text-[10px] font-extrabold uppercase tracking-wider bg-blue-50 text-[#3B82F6] px-2 py-0.5 rounded">
-                        Interactive Preview
-                      </span>
-                      <span className="text-xs text-gray-400">({readTimeMin} min read)</span>
+                <div className="flex-1 min-h-0 overflow-y-auto rounded-xl bg-[#F8FAFC] border-2 border-transparent focus-within:bg-white focus-within:border-[#3B82F6] transition-colors">
+                  <div className="relative min-h-full">
+                    <div
+                      aria-hidden="true"
+                      className="md-live-backdrop min-h-full p-4 sm:p-5 font-mono text-sm leading-relaxed text-gray-900 whitespace-pre-wrap break-words pointer-events-none select-none"
+                    >
+                      <MarkdownLiveBackdrop content={currentContent} />
                     </div>
-                    {renderInteractiveDocument()}
+                    <textarea
+                      ref={textareaRef}
+                      value={currentContent}
+                      onChange={handleContentChange}
+                      onKeyDown={handleEditorKeyDown}
+                      onSelect={handleSelectText}
+                      onClick={handleMarkdownCheckboxClick}
+                      onContextMenu={handleContextMenu}
+                      placeholder="Start typing your notes...&#10;&#10;✨ Shortcuts:&#10;• Type '/--checkbox create email templete --/' for Instant Checkbox&#10;• Type '/' for Notion-Style Slash Commands&#10;• Type '- ' for Bullet Points&#10;• Type '1. ' for Numbered Lists&#10;• Type '[] ' for To-Do Checklist&#10;• Type '# ' for Large Heading"
+                      className="absolute inset-0 w-full h-full p-4 sm:p-5 font-mono text-sm leading-relaxed whitespace-pre-wrap break-words bg-transparent text-transparent caret-gray-900 placeholder:text-gray-400 border-none outline-none resize-none overflow-hidden selection:bg-blue-200/60"
+                    />
                   </div>
                 </div>
-              </>
+              </div>
             )}
           </div>
 
@@ -3700,6 +3900,13 @@ export function NotepadModule({
                     desc: "Hindi/Hinglish to standard English",
                     icon: Languages,
                     color: "text-blue-400 bg-blue-950/60",
+                  },
+                  {
+                    id: "english_to_hinglish",
+                    label: "Translate English → Hinglish",
+                    desc: "English to natural conversational Hinglish",
+                    icon: Languages,
+                    color: "text-indigo-400 bg-indigo-950/60",
                   },
                   {
                     id: "professional",

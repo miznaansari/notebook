@@ -17,7 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { FolderPlus, Loader2 } from "lucide-react";
+import { FolderPlus } from "lucide-react";
 
 const PROJECT_COLORS = [
   "#3B82F6", // Blue
@@ -55,11 +55,15 @@ export default function WorkspacePage() {
   // Question IDs passed from Meeting Prep to Meetings module
   const [preSelectedMeetingQuestions, setPreSelectedMeetingQuestions] = React.useState<string[]>([]);
 
-  // Fetch current user and initial project list
+  // Visited projects, shown instantly on revisit while a fresh copy loads in the background
+  const projectCacheRef = React.useRef<Map<string, any>>(new Map());
+  const projectFetchRef = React.useRef<AbortController | null>(null);
+
+  // Fetch current user and initial project list (in parallel)
   React.useEffect(() => {
     const init = async () => {
       try {
-        const meRes = await fetch("/api/auth/me");
+        const [meRes, projRes] = await Promise.all([fetch("/api/auth/me"), fetch("/api/projects")]);
         if (!meRes.ok) {
           router.push("/login");
           return;
@@ -67,8 +71,6 @@ export default function WorkspacePage() {
         const meData = await meRes.json();
         setUser(meData.user);
 
-        // Fetch projects
-        const projRes = await fetch("/api/projects");
         if (projRes.ok) {
           const projData = await projRes.json();
           setProjects(projData.projects || []);
@@ -85,34 +87,77 @@ export default function WorkspacePage() {
     init();
   }, [router]);
 
-  // Fetch full details of selected project
-  const fetchProjectDetails = React.useCallback(async (id: string) => {
-    setIsLoadingProject(true);
-    try {
-      const res = await fetch(`/api/projects/${id}`);
-      if (res.ok) {
-        const data = await res.json();
-        setActiveProjectData(data.project);
-        setProjectName(data.project.name);
-        setClientName(data.project.clientName || "");
-        setProjectDesc(data.project.description || "");
-        setProjectColor(data.project.color || "#3B82F6");
-        setProjectIsArchived(data.project.isArchived || false);
-      } else {
-        toast.error("Project not found");
-      }
-    } catch (err) {
-      toast.error("Failed to load project details");
-    } finally {
-      setIsLoadingProject(false);
-    }
+  const applyProjectData = React.useCallback((project: any) => {
+    setActiveProjectData(project);
+    setProjectName(project.name);
+    setClientName(project.clientName || "");
+    setProjectDesc(project.description || "");
+    setProjectColor(project.color || "#3B82F6");
+    setProjectIsArchived(project.isArchived || false);
   }, []);
+
+  // Fetch full details of selected project. Each call aborts the one still pending, so clicking
+  // through projects quickly only ever loads and renders the last one picked.
+  const fetchProjectDetails = React.useCallback(
+    async (id: string) => {
+      projectFetchRef.current?.abort();
+      const controller = new AbortController();
+      projectFetchRef.current = controller;
+
+      const cached = projectCacheRef.current.get(id);
+      if (cached) {
+        applyProjectData(cached);
+        setIsLoadingProject(false);
+      } else {
+        setIsLoadingProject(true);
+      }
+
+      try {
+        const res = await fetch(`/api/projects/${id}`, { signal: controller.signal });
+        if (res.ok) {
+          const data = await res.json();
+          projectCacheRef.current.set(id, data.project);
+          applyProjectData(data.project);
+        } else {
+          projectCacheRef.current.delete(id);
+          toast.error("Project not found");
+        }
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        toast.error("Failed to load project details");
+      } finally {
+        if (projectFetchRef.current === controller) {
+          projectFetchRef.current = null;
+          setIsLoadingProject(false);
+        }
+      }
+    },
+    [applyProjectData]
+  );
 
   React.useEffect(() => {
     if (selectedProjectId) {
       fetchProjectDetails(selectedProjectId);
     }
+    return () => projectFetchRef.current?.abort();
   }, [selectedProjectId, fetchProjectDetails]);
+
+  // Keep the cache in step with local edits so a revisit shows them
+  React.useEffect(() => {
+    if (activeProjectData?.id) {
+      projectCacheRef.current.set(activeProjectData.id, activeProjectData);
+    }
+  }, [activeProjectData]);
+
+  // Apply a module's change to the project it came from. A save that resolves after the user has
+  // switched projects updates that project's cached copy instead of leaking into the open one.
+  const updateProjectData = React.useCallback((projectId: string, patch: Record<string, any>) => {
+    const cached = projectCacheRef.current.get(projectId);
+    if (cached) {
+      projectCacheRef.current.set(projectId, { ...cached, ...patch });
+    }
+    setActiveProjectData((prev: any) => (prev?.id === projectId ? { ...prev, ...patch } : prev));
+  }, []);
 
   // Create Project
   const handleCreateProject = async (e: React.FormEvent) => {
@@ -181,8 +226,16 @@ export default function WorkspacePage() {
       });
 
       if (res.ok) {
+        const data = await res.json();
         toast.success("Project settings updated!");
         setIsEditProjectModalOpen(false);
+        updateProjectData(selectedProjectId, {
+          name: data.project.name,
+          clientName: data.project.clientName,
+          description: data.project.description,
+          color: data.project.color,
+          isArchived: data.project.isArchived,
+        });
         fetchProjectDetails(selectedProjectId);
 
         // Refresh sidebar
@@ -223,10 +276,8 @@ export default function WorkspacePage() {
           prev.map((p) => (p.id === targetId ? { ...p, isArchived: targetStatus } : p))
         );
 
+        updateProjectData(targetId, { isArchived: targetStatus });
         if (targetId === selectedProjectId) {
-          setActiveProjectData((prev: any) =>
-            prev ? { ...prev, isArchived: targetStatus } : prev
-          );
           setProjectIsArchived(targetStatus);
         }
 
@@ -263,6 +314,7 @@ export default function WorkspacePage() {
 
       if (res.ok) {
         toast.success("Project deleted successfully");
+        projectCacheRef.current.delete(selectedProjectId);
         const listRes = await fetch("/api/projects");
         if (listRes.ok) {
           const listData = await listRes.json();
@@ -351,10 +403,32 @@ export default function WorkspacePage() {
       {/* Right Main Workspace View (Full remaining height & width for children) */}
       <main className="flex-1 flex flex-col h-screen overflow-hidden bg-white">
         {isLoadingProject ? (
-          <div className="flex-1 flex items-center justify-center p-12">
-            <div className="flex items-center gap-2 text-sm font-bold text-gray-500">
-              <Loader2 className="w-5 h-5 animate-spin text-[#3B82F6]" />
-              <span>Loading project workspace...</span>
+          /* Skeleton shaped like the workspace so the switch feels instant */
+          <div
+            className="flex-1 flex flex-col overflow-hidden animate-pulse"
+            aria-busy="true"
+            aria-label="Loading project workspace"
+          >
+            <div className="px-4 py-3 border-b-2 border-gray-200 space-y-3 shrink-0">
+              <div className="h-5 w-48 max-w-[60%] bg-gray-200 rounded" />
+              <div className="flex gap-2 overflow-hidden">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="h-7 w-20 bg-gray-100 rounded-md shrink-0" />
+                ))}
+              </div>
+            </div>
+            <div className="flex-1 flex overflow-hidden">
+              <div className="hidden lg:flex flex-col gap-2 w-72 border-r-2 border-gray-200 bg-[#F3F4F6] p-3">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <div key={i} className="h-20 bg-white rounded-lg" />
+                ))}
+              </div>
+              <div className="flex-1 p-4 sm:p-8 space-y-3">
+                <div className="h-7 w-1/3 bg-gray-200 rounded" />
+                <div className="h-4 w-2/3 bg-gray-100 rounded" />
+                <div className="h-4 w-1/2 bg-gray-100 rounded" />
+                <div className="h-4 w-3/5 bg-gray-100 rounded" />
+              </div>
             </div>
           </div>
         ) : activeProjectData ? (
@@ -371,24 +445,19 @@ export default function WorkspacePage() {
               onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
             />
 
-            {/* Children Workspace Modules (Takes 100% of remaining screen) */}
-            <div className="flex-1 overflow-y-auto bg-white">
+            {/* Children Workspace Modules (Takes 100% of remaining screen). Keyed by project so
+                switching to a cached project still remounts modules with fresh local state. */}
+            <div key={activeProjectData.id} className="flex-1 overflow-y-auto bg-white">
               {activeTab === "notes" && (
                 <NotepadModule
                   projectId={activeProjectData.id}
                   notes={activeProjectData.notes || []}
                   tasks={activeProjectData.tasks || []}
                   onNotesChange={(newNotes) => {
-                    setActiveProjectData((prev: any) => ({
-                      ...prev,
-                      notes: newNotes,
-                    }));
+                    updateProjectData(activeProjectData.id, { notes: newNotes });
                   }}
                   onTasksChange={(newTasks) => {
-                    setActiveProjectData((prev: any) => ({
-                      ...prev,
-                      tasks: newTasks,
-                    }));
+                    updateProjectData(activeProjectData.id, { tasks: newTasks });
                   }}
                   onNavigateToTab={(tab) => setActiveTab(tab)}
                 />
@@ -400,16 +469,10 @@ export default function WorkspacePage() {
                   questions={activeProjectData.questions || []}
                   categories={activeProjectData.categories || []}
                   onQuestionsChange={(newQuestions) => {
-                    setActiveProjectData((prev: any) => ({
-                      ...prev,
-                      questions: newQuestions,
-                    }));
+                    updateProjectData(activeProjectData.id, { questions: newQuestions });
                   }}
                   onCategoriesChange={(newCategories) => {
-                    setActiveProjectData((prev: any) => ({
-                      ...prev,
-                      categories: newCategories,
-                    }));
+                    updateProjectData(activeProjectData.id, { categories: newCategories });
                   }}
                 />
               )}
@@ -422,16 +485,10 @@ export default function WorkspacePage() {
                   questions={activeProjectData.questions || []}
                   categories={activeProjectData.categories || []}
                   onQuestionsChange={(newQuestions) => {
-                    setActiveProjectData((prev: any) => ({
-                      ...prev,
-                      questions: newQuestions,
-                    }));
+                    updateProjectData(activeProjectData.id, { questions: newQuestions });
                   }}
                   onCategoriesChange={(newCategories) => {
-                    setActiveProjectData((prev: any) => ({
-                      ...prev,
-                      categories: newCategories,
-                    }));
+                    updateProjectData(activeProjectData.id, { categories: newCategories });
                   }}
                   onNavigateToMeetings={() => setActiveTab("meetings")}
                   onScheduleMeetingWithQuestions={handleScheduleFromPrep}
@@ -448,23 +505,14 @@ export default function WorkspacePage() {
                   questions={activeProjectData.questions || []}
                   preSelectedQuestionIds={preSelectedMeetingQuestions}
                   onTasksChange={(newTasks) => {
-                    setActiveProjectData((prev: any) => ({
-                      ...prev,
-                      tasks: newTasks,
-                    }));
+                    updateProjectData(activeProjectData.id, { tasks: newTasks });
                   }}
                   onMeetingsChange={(newMeetings) => {
-                    setActiveProjectData((prev: any) => ({
-                      ...prev,
-                      meetings: newMeetings,
-                    }));
+                    updateProjectData(activeProjectData.id, { meetings: newMeetings });
                     setPreSelectedMeetingQuestions([]);
                   }}
                   onNotesChange={(newNotes) => {
-                    setActiveProjectData((prev: any) => ({
-                      ...prev,
-                      notes: newNotes,
-                    }));
+                    updateProjectData(activeProjectData.id, { notes: newNotes });
                   }}
                   onNavigateToTab={(tab) => setActiveTab(tab)}
                 />
@@ -476,10 +524,7 @@ export default function WorkspacePage() {
                   tasks={activeProjectData.tasks || []}
                   meetings={activeProjectData.meetings || []}
                   onTasksChange={(newTasks) => {
-                    setActiveProjectData((prev: any) => ({
-                      ...prev,
-                      tasks: newTasks,
-                    }));
+                    updateProjectData(activeProjectData.id, { tasks: newTasks });
                   }}
                 />
               )}

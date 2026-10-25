@@ -34,17 +34,20 @@
     font-weight: 700;
   }
 
-  /* Standard text-sm on all form controls & prevent mobile auto-zoom */
+  /* Standard text-sm on all form controls & prevent mobile auto-zoom.
+     .md-live-backdrop is the layer drawn behind the Markdown editor textarea and must match its font size. */
   input:not([type="checkbox"]):not([type="radio"]),
   select,
-  textarea {
+  textarea,
+  .md-live-backdrop {
     font-size: 0.875rem; /* text-sm standard (14px) */
   }
 
   @media screen and (max-width: 768px) {
     input:not([type="checkbox"]):not([type="radio"]),
     select,
-    textarea {
+    textarea,
+    .md-live-backdrop {
       font-size: 16px !important; /* 16px prevents iOS Safari automatic viewport zooming */
     }
   }

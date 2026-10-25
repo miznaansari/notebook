@@ -35,6 +35,11 @@ export async function POST(req: NextRequest) {
         systemInstruction = "You are a bilingual English-Hindi project manager. Accurately translate Hinglish queries, notes, and questions into formal, precise English. Return only the translated English text.";
         break;
 
+      case "english_to_hinglish":
+        prompt = `Translate the following English text into clear, natural, and conversational Hinglish (Hindi written in English/Latin/Roman script) commonly used in Indian software teams, business discussions, and day-to-day project communication:\n\n${text}`;
+        systemInstruction = "You are a bilingual English-Hindi project manager. Accurately translate English queries, requirements, notes, tasks, and questions into natural, conversational Hinglish (Hindi written in English/Latin alphabet). Retain standard technical terms (such as API, database, backend, frontend, server, bug, login, payment gateway, deadline, etc.) in English as commonly done in Hinglish conversations. Return only the translated Hinglish text directly without any preamble, markdown formatting, or quotes.";
+        break;
+
       case "english_to_simple":
         prompt = `Simplify the following technical requirements/notes into crystal-clear, easy-to-understand plain English suitable for non-technical clients:\n\n${text}`;
         systemInstruction = "You are a clear communicator. Remove unnecessary technical jargon and explain concepts in plain, direct English. Return only the simplified text.";
@@ -55,6 +60,20 @@ export async function POST(req: NextRequest) {
       case "note_description":
         prompt = `Analyze the following note content and generate a crisp, concise, informative 1-sentence note description (maximum 15-20 words). The description should summarize the core purpose, topic, or key takeaways of the note so the user instantly understands it in note cards. Do NOT wrap in quotes, do NOT add conversational filler like "This note is about", do NOT use markdown symbols. Return only the clean description directly.\n\nNote Title: "${context || ""}"\n\nNote Content:\n${text}`;
         systemInstruction = "You are a senior technical writer. Return only the concise 1-sentence note description directly without any quotes or preamble.";
+        break;
+
+      case "generate_note_meta":
+        prompt = `Analyze the following note content and generate:
+1. "title": a short, specific note title (3-7 words, Title Case) naming the note's main topic. No quotes, no emojis, no trailing punctuation, no generic words like "Note" or "Notes".
+2. "description": a crisp, informative 1-sentence description (maximum 15-20 words) summarizing the core purpose or key takeaways. No filler like "This note is about", no markdown symbols.
+
+Return ONLY a valid JSON object: {"title": "...", "description": "..."}
+
+Current Note Title: "${context || ""}"
+
+Note Content:
+${text}`;
+        systemInstruction = "You are a senior technical writer. Return valid JSON only without markdown formatting.";
         break;
 
       case "execute_task":
@@ -158,7 +177,8 @@ Do not include markdown fences outside the JSON. Return only the valid JSON obje
       action === "extract_tasks" ||
       action === "generate_tasks" ||
       action === "generate_daily_summary" ||
-      action === "standup_summary"
+      action === "standup_summary" ||
+      action === "generate_note_meta"
     ) {
       try {
         let cleanedJson = result.trim();
@@ -168,7 +188,7 @@ Do not include markdown fences outside the JSON. Return only the valid JSON obje
         const objectMatch = cleanedJson.match(/\{[\s\S]*\}/);
         const arrayMatch = cleanedJson.match(/\[[\s\S]*\]/);
         
-        if (action === "generate_daily_summary" || action === "standup_summary") {
+        if (action === "generate_daily_summary" || action === "standup_summary" || action === "generate_note_meta") {
           if (objectMatch) cleanedJson = objectMatch[0];
         } else if (arrayMatch) {
           cleanedJson = arrayMatch[0];

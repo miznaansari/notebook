@@ -29,6 +29,7 @@ export interface AIMagicButtonProps {
     | "grammar"
     | "professional"
     | "hinglish_to_english"
+    | "english_to_hinglish"
     | "english_to_simple"
     | "summarize"
     | "make_short"
@@ -47,6 +48,7 @@ export function AIMagicButton({
     "grammar",
     "professional",
     "hinglish_to_english",
+    "english_to_hinglish",
     "english_to_simple",
     "make_short",
     "summarize",
@@ -110,6 +112,13 @@ export function AIMagicButton({
       desc: "Converts Hindi in English script into formal English",
       icon: Languages,
       color: "text-blue-600",
+    },
+    {
+      id: "english_to_hinglish",
+      label: "Translate English → Hinglish",
+      desc: "Converts formal English into conversational Hinglish",
+      icon: Languages,
+      color: "text-indigo-600",
     },
     {
       id: "professional",
