@@ -54,6 +54,8 @@ import {
   PenTool,
   CornerDownLeft,
   WandSparkles,
+  CalendarDays,
+  History,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -61,6 +63,9 @@ import { Modal } from "@/components/ui/modal";
 import { AIMagicButton } from "@/components/ui/ai-magic-button";
 import { AiActionMenu, type AiMenuEntry, type AiMenuGroup } from "@/components/ui/ai-action-menu";
 import { MarkdownLiveEditor, MD_TASK_PREFIX, type MarkdownEditorHandle } from "./MarkdownLiveEditor";
+import { getLastNoteId, setLastNoteId } from "@/lib/last-open";
+import { DailyBriefPanel, useTodayKey } from "./DailyBriefPanel";
+import { formatBriefDate, type DailyBriefSummary } from "@/lib/daily-brief";
 import { VoiceMicButton } from "@/components/ui/voice-mic-button";
 import { cn, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
@@ -160,6 +165,9 @@ const taskMenuEntries = (isEmailTask: boolean): AiMenuEntry[] => [
     : { id: "execute_task", label: "Generate deliverable", hint: "Draft AI solution or template", icon: Sparkles },
 ];
 
+// Stored as the "last open note" when the Daily Brief was open
+const DAILY_BRIEF_ID = "__daily_brief__";
+
 // Titles that mean the user never named the note, so AI may name it
 const DEFAULT_NOTE_TITLES = ["", "new note", "untitled note", "untitled"];
 
@@ -171,9 +179,21 @@ export function NotepadModule({
   onTasksChange,
   onNavigateToTab,
 }: NotepadModuleProps) {
-  const [activeNoteId, setActiveNoteId] = React.useState<string | null>(
-    notes.length > 0 ? notes[0].id : null
-  );
+  // Reopen what the user last had open in this project: a note that still exists, or the
+  // Daily Brief (also the default, since it's the first item in every project)
+  const [isDailyBriefOpen, setIsDailyBriefOpen] = React.useState(() => {
+    const lastNoteId = getLastNoteId(projectId);
+    return !lastNoteId || lastNoteId === DAILY_BRIEF_ID || !notes.some((n) => n.id === lastNoteId);
+  });
+  const [activeNoteId, setActiveNoteId] = React.useState<string | null>(() => {
+    const lastNoteId = getLastNoteId(projectId);
+    if (lastNoteId && notes.some((n) => n.id === lastNoteId)) return lastNoteId;
+    return notes.length > 0 ? notes[0].id : null;
+  });
+  const isDailyBriefOpenRef = React.useRef(isDailyBriefOpen);
+  React.useEffect(() => {
+    isDailyBriefOpenRef.current = isDailyBriefOpen;
+  }, [isDailyBriefOpen]);
   const [currentTitle, setCurrentTitle] = React.useState("");
   const [currentContent, setCurrentContent] = React.useState("");
   const [currentDescription, setCurrentDescription] = React.useState<string | null>(null);
@@ -182,7 +202,37 @@ export function NotepadModule({
   const [saveStatus, setSaveStatus] = React.useState<"saved" | "saving" | "unsaved">("saved");
   const [viewMode, setViewMode] = React.useState<"interactive" | "markdown">("interactive");
   const [searchNotes, setSearchNotes] = React.useState("");
-  const [mobileView, setMobileView] = React.useState<"list" | "editor">(notes.length > 0 ? "editor" : "list");
+  const [mobileView, setMobileView] = React.useState<"list" | "editor">(
+    isDailyBriefOpen || notes.length > 0 ? "editor" : "list"
+  );
+
+  // Daily Brief: index of days with a brief (null while loading), shared by the list card and the panel
+  const todayKey = useTodayKey();
+  const [briefIndex, setBriefIndex] = React.useState<DailyBriefSummary[] | null>(null);
+  React.useEffect(() => {
+    const controller = new AbortController();
+    fetch(`/api/projects/${projectId}/daily-briefs`, { signal: controller.signal })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data) setBriefIndex(data.briefs);
+      })
+      .catch((err) => {
+        if (!controller.signal.aborted) console.error("Failed to load daily briefs:", err);
+      });
+    return () => controller.abort();
+  }, [projectId]);
+
+  const handleBriefSummaryChange = React.useCallback((date: string, summary: DailyBriefSummary | null) => {
+    setBriefIndex((prev) => {
+      const rest = (prev ?? []).filter((b) => b.date !== date);
+      return summary ? [...rest, summary].sort((a, b) => b.date.localeCompare(a.date)) : rest;
+    });
+  }, []);
+
+  const handleOpenDailyBrief = () => {
+    setIsDailyBriefOpen(true);
+    setMobileView("editor");
+  };
 
   // Multi-tier AI description generation tracking (15 words -> tier 1, 30 words -> tier 2, 50 words -> tier 3)
   const noteDescTiersRef = React.useRef<{ [noteId: string]: number }>({});
@@ -537,6 +587,12 @@ export function NotepadModule({
     return false;
   }, [scheduleAutoSave]);
 
+  // Remember the open note (or the Daily Brief) so reopening the app lands back on it
+  React.useEffect(() => {
+    if (isDailyBriefOpen) setLastNoteId(projectId, DAILY_BRIEF_ID);
+    else if (activeNoteId) setLastNoteId(projectId, activeNoteId);
+  }, [projectId, activeNoteId, isDailyBriefOpen]);
+
   // Sync state ONLY when switching to a DIFFERENT active note
   React.useEffect(() => {
     if (!activeNoteId) {
@@ -660,6 +716,9 @@ export function NotepadModule({
         setBubbleToolbar(null);
         setActiveTaskAiMenu(null);
       }
+
+      // The Daily Brief has its own undo history and save; note shortcuts would edit the hidden note
+      if (isDailyBriefOpenRef.current) return;
 
       // Multi-line selection Copy (Ctrl+C / Cmd+C)
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c" && selectedLineRange) {
@@ -1423,6 +1482,9 @@ export function NotepadModule({
     const el = bubbleToolbarRef.current;
     if (!bubbleToolbar || !el) return;
     const margin = 8;
+    // Measure from the corner: left unset, a fixed box sits at its in-flow spot and stretches to the remaining width
+    el.style.left = "0px";
+    el.style.top = "0px";
     const { width, height } = el.getBoundingClientRect();
     let top = bubbleToolbar.anchorTop - height - margin;
     if (top < margin) top = bubbleToolbar.anchorBottom + margin;
@@ -2293,6 +2355,7 @@ export function NotepadModule({
   };
 
   const handleSelectNote = (noteId: string) => {
+    setIsDailyBriefOpen(false);
     if (noteId === activeNoteId) {
       setMobileView("editor");
       return;
@@ -2330,6 +2393,7 @@ export function NotepadModule({
         onNotesChange([data.note, ...notes]);
         lastLoadedNoteIdRef.current = null;
         setActiveNoteId(data.note.id);
+        setIsDailyBriefOpen(false);
         setMobileView("editor");
         toast.success("New note created!");
       } else {
@@ -2610,7 +2674,7 @@ export function NotepadModule({
                   }}
                   onKeyDown={(e) => handleInteractiveKeyDown(e, idx, "h1", hText)}
                   placeholder="Heading 1..."
-                  className="w-full text-2xl sm:text-3xl font-extrabold text-gray-950 bg-transparent border-none outline-none focus:bg-blue-50/50 rounded px-1 -mx-1 py-0 leading-tight"
+                  className="keep-font-size w-full text-2xl sm:text-3xl font-extrabold text-gray-950 bg-transparent border-none outline-none focus:bg-blue-50/50 rounded px-1 -mx-1 py-0 leading-tight"
                 />
               </div>
             );
@@ -2646,7 +2710,7 @@ export function NotepadModule({
                   }}
                   onKeyDown={(e) => handleInteractiveKeyDown(e, idx, "h2", hText)}
                   placeholder="Heading 2..."
-                  className="w-full text-xl sm:text-2xl font-bold text-indigo-950 bg-transparent border-none outline-none focus:bg-blue-50/50 rounded px-1 -mx-1 py-0 leading-snug"
+                  className="keep-font-size w-full text-xl sm:text-2xl font-bold text-indigo-950 bg-transparent border-none outline-none focus:bg-blue-50/50 rounded px-1 -mx-1 py-0 leading-snug"
                 />
               </div>
             );
@@ -2682,7 +2746,7 @@ export function NotepadModule({
                   }}
                   onKeyDown={(e) => handleInteractiveKeyDown(e, idx, "h3", hText)}
                   placeholder="Heading 3..."
-                  className="w-full text-lg font-bold text-gray-800 bg-transparent border-none outline-none focus:bg-blue-50/50 rounded px-1 -mx-1 py-0 leading-snug"
+                  className="keep-font-size w-full text-lg font-bold text-gray-800 bg-transparent border-none outline-none focus:bg-blue-50/50 rounded px-1 -mx-1 py-0 leading-snug"
                 />
               </div>
             );
@@ -2709,7 +2773,7 @@ export function NotepadModule({
                 onMouseDown={(e) => handleLineMouseDown(idx, e)}
                 onMouseEnter={() => handleLineMouseEnter(idx)}
                 className={cn(
-                  "group flex flex-col sm:flex-row sm:items-start justify-between gap-1 sm:gap-2 py-0.5 px-1.5 rounded-md transition border border-transparent",
+                  "group flex flex-row items-start justify-between gap-1 sm:gap-2 py-0.5 px-1.5 rounded-md transition border border-transparent",
                   isChecked ? "bg-gray-50/70" : "hover:bg-blue-50/60 hover:border-blue-200",
                   isSelectedLine && "bg-blue-100/70"
                 )}
@@ -2761,7 +2825,7 @@ export function NotepadModule({
                 </div>
 
                 {/* Right / Mobile Action Badges */}
-                <div className="relative flex items-center gap-1.5 shrink-0 pl-6 sm:pl-0 self-end sm:self-start sm:mt-0">
+                <div className="relative flex items-center gap-1 sm:gap-1.5 shrink-0 self-start">
                   <div className="relative inline-block">
                     <button
                       type="button"
@@ -2772,7 +2836,7 @@ export function NotepadModule({
                       disabled={isThisExecuting || taskAiLoadingIdx === idx}
                       title="AI Tools (Grammar, Hinglish ↔ English, Professional, Deliverables)"
                       className={cn(
-                        "flex items-center gap-1 px-2 py-0.5 rounded text-[11px] sm:text-xs font-bold transition border cursor-pointer shadow-xs whitespace-nowrap",
+                        "flex items-center gap-1 px-2 py-0.5 max-sm:p-1.5 rounded text-[11px] sm:text-xs font-bold transition border cursor-pointer shadow-xs whitespace-nowrap",
                         isEmailTask
                           ? "bg-amber-100 hover:bg-amber-200 text-amber-900 border-amber-300"
                           : "bg-blue-50 hover:bg-blue-100 text-blue-800 border-blue-200"
@@ -2785,8 +2849,8 @@ export function NotepadModule({
                       ) : (
                         <Sparkles className="w-3 h-3 text-blue-600" />
                       )}
-                      <span>{isEmailTask ? "Draft Email" : "AI Tools"}</span>
-                      <ChevronDown className="w-2.5 h-2.5 opacity-70 ml-0.5" />
+                      <span className="max-sm:hidden">{isEmailTask ? "Draft Email" : "AI Tools"}</span>
+                      <ChevronDown className="w-2.5 h-2.5 opacity-70 ml-0.5 max-sm:hidden" />
                     </button>
 
                     {/* AI Task Actions Dropdown Menu */}
@@ -2813,7 +2877,7 @@ export function NotepadModule({
                     type="button"
                     onClick={() => handleSyncTaskToWorkspace(taskText)}
                     title="Sync to Project Tasks board"
-                    className="p-1 rounded bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs transition border border-gray-200 cursor-pointer"
+                    className="p-1 max-sm:p-1.5 rounded bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs transition border border-gray-200 cursor-pointer"
                   >
                     <CheckSquare className="w-3.5 h-3.5" />
                   </button>
@@ -2993,35 +3057,38 @@ export function NotepadModule({
         })}
 
         {/* Quick Document Action Buttons at Bottom */}
-        <div className="pt-3 flex flex-col sm:flex-row items-stretch sm:items-center gap-2 border-t border-gray-100 mt-3">
+        <div className="pt-3 grid grid-cols-3 sm:flex sm:flex-row items-stretch sm:items-center gap-2 border-t border-gray-100 mt-3">
           <Button
             variant="outline"
             size="sm"
             onClick={() => handleInsertCheckbox()}
-            className="gap-1.5 text-xs text-blue-700 bg-blue-50 hover:bg-blue-100 border-blue-200 cursor-pointer active:scale-95 transition-all shadow-xs justify-center"
+            className="max-sm:px-1 gap-1.5 text-xs text-blue-700 bg-blue-50 hover:bg-blue-100 border-blue-200 cursor-pointer active:scale-95 transition-all shadow-xs justify-center"
           >
             <CheckSquare className="w-3.5 h-3.5" />
-            <span>+ Add Task Checkbox</span>
+            <span className="sm:hidden">Task</span>
+            <span className="max-sm:hidden">+ Add Task Checkbox</span>
           </Button>
 
           <Button
             variant="outline"
             size="sm"
             onClick={() => handleInsertCheckbox("create email template for: ")}
-            className="gap-1.5 text-xs text-amber-800 bg-amber-50 hover:bg-amber-100 border-amber-200 cursor-pointer active:scale-95 transition-all shadow-xs justify-center"
+            className="max-sm:px-1 gap-1.5 text-xs text-amber-800 bg-amber-50 hover:bg-amber-100 border-amber-200 cursor-pointer active:scale-95 transition-all shadow-xs justify-center"
           >
             <Mail className="w-3.5 h-3.5" />
-            <span>+ Add Email Template Task</span>
+            <span className="sm:hidden">Email</span>
+            <span className="max-sm:hidden">+ Add Email Template Task</span>
           </Button>
 
           <Button
             variant="outline"
             size="sm"
             onClick={() => insertLineAfter(activeInteractiveLineRef.current.lineIdx ?? rawLines.length - 1, "paragraph", "")}
-            className="gap-1.5 text-xs text-gray-700 hover:bg-gray-100 cursor-pointer active:scale-95 transition-all justify-center"
+            className="max-sm:px-1 gap-1.5 text-xs text-gray-700 hover:bg-gray-100 cursor-pointer active:scale-95 transition-all justify-center"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>+ Add Line</span>
+            <span className="sm:hidden">Line</span>
+            <span className="max-sm:hidden">+ Add Line</span>
           </Button>
         </div>
       </div>
@@ -3081,6 +3148,57 @@ export function NotepadModule({
 
         {/* Notes Items List */}
         <div className="flex-1 overflow-y-auto p-2.5 space-y-1.5">
+          {/* Daily Brief: always the first item, a fresh page each day */}
+          {!searchNotes && (() => {
+            const todayBrief = briefIndex?.find((b) => b.date === todayKey);
+            const pastCount = briefIndex ? briefIndex.filter((b) => b.date < todayKey).length : null;
+            return (
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={handleOpenDailyBrief}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    handleOpenDailyBrief();
+                  }
+                }}
+                className={cn(
+                  "group p-3.5 rounded-lg cursor-pointer transition-all duration-150 select-none relative active:scale-[0.98] border-2 outline-none focus-visible:ring-2 focus-visible:ring-blue-400",
+                  isDailyBriefOpen
+                    ? "bg-white border-blue-200 border-l-4 border-l-[#3B82F6] shadow-sm"
+                    : "bg-blue-50/70 border-blue-100 hover:bg-white hover:scale-[1.01]"
+                )}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <CalendarDays className="w-4 h-4 text-[#3B82F6] shrink-0" strokeWidth={2.4} />
+                    <h4 className="text-sm font-bold text-gray-900 truncate leading-tight">Daily Brief</h4>
+                  </div>
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#3B82F6] shrink-0">
+                    {formatBriefDate(todayKey, "short")}
+                  </span>
+                </div>
+                <p className="text-xs text-gray-500 line-clamp-2 mt-1.5 leading-relaxed break-words">
+                  {todayBrief?.preview || "Nothing yet today. Tap to plan your day."}
+                </p>
+                <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-blue-100 text-[11px] font-semibold text-gray-500">
+                  <span>
+                    {todayBrief && todayBrief.tasksTotal > 0
+                      ? `${todayBrief.tasksDone}/${todayBrief.tasksTotal} tasks done`
+                      : "Today"}
+                  </span>
+                  {pastCount !== null && pastCount > 0 && (
+                    <span className="flex items-center gap-1 text-gray-400">
+                      <History className="w-3 h-3" />
+                      {pastCount} past {pastCount === 1 ? "brief" : "briefs"}
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
           {filteredNotes.length === 0 ? (
             <div className="p-6 text-center bg-white rounded-lg border-2 border-dashed border-gray-300">
               <FileText className="w-6 h-6 text-gray-400 mx-auto mb-1.5" />
@@ -3107,7 +3225,7 @@ export function NotepadModule({
             </div>
           ) : (
             filteredNotes.map((note) => {
-              const isSelected = note.id === activeNoteId;
+              const isSelected = !isDailyBriefOpen && note.id === activeNoteId;
               const words = countWords(note.content);
               const hasAiDescription = words >= 15 && Boolean(note.description);
               const fullNoteSnippet = hasAiDescription
@@ -3138,7 +3256,7 @@ export function NotepadModule({
                     <button
                       onClick={(e) => handleDeleteNote(note.id, e)}
                       title="Delete Note"
-                      className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-600 rounded transition-opacity"
+                      className="opacity-0 group-hover:opacity-100 max-md:opacity-100 max-md:p-1.5 p-1 text-gray-400 hover:text-red-600 rounded transition-opacity"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -3178,7 +3296,16 @@ export function NotepadModule({
       </div>
 
       {/* Main Advance Editor Area */}
-      {activeNoteId ? (
+      {isDailyBriefOpen ? (
+        <DailyBriefPanel
+          projectId={projectId}
+          todayKey={todayKey}
+          briefs={briefIndex}
+          onSummaryChange={handleBriefSummaryChange}
+          onBack={() => setMobileView("list")}
+          className={mobileView === "list" ? "hidden lg:flex" : "flex"}
+        />
+      ) : activeNoteId ? (
         <div
           className={cn(
             "flex-1 flex-col bg-white overflow-hidden relative",
@@ -3188,9 +3315,9 @@ export function NotepadModule({
         >
           {/* Note Controls Top Bar */}
           <div className="p-2.5 sm:p-4 border-b-2 border-gray-200 bg-white">
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center justify-between gap-2 max-md:flex-wrap max-md:gap-y-1.5">
               {/* Left: Mobile Back Button + Title & Tags */}
-              <div className="flex items-center gap-2 flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-1 min-w-0 max-md:basis-full">
                 <button
                   type="button"
                   onClick={() => setMobileView("list")}
@@ -3208,7 +3335,7 @@ export function NotepadModule({
                       value={currentTitle}
                       onChange={handleTitleChange}
                       placeholder="Note Title..."
-                      className="flex-1 min-w-0 text-base sm:text-2xl font-extrabold text-gray-900 border-none outline-none placeholder:text-gray-300 bg-transparent truncate"
+                      className="keep-font-size flex-1 min-w-0 text-lg sm:text-2xl font-extrabold text-gray-900 border-none outline-none placeholder:text-gray-300 bg-transparent truncate"
                     />
                     <button
                       type="button"
@@ -3238,7 +3365,7 @@ export function NotepadModule({
               </div>
 
               {/* Right: Actions Bar (Save status, Voice, AI, Pin, Copy, Export) */}
-              <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+              <div className="flex items-center gap-1 sm:gap-2 shrink-0 max-md:w-full max-md:pl-9">
                 {/* Save Status Badge */}
                 <span
                   onClick={handleManualSave}
@@ -3356,7 +3483,7 @@ export function NotepadModule({
                   variant="secondary"
                   size="sm"
                   onClick={handleCopyNote}
-                  className="hidden sm:flex h-8 px-2 text-xs"
+                  className="flex h-8 px-2 text-xs"
                   title="Copy Markdown"
                 >
                   <Copy className="w-3.5 h-3.5" />
@@ -3368,7 +3495,7 @@ export function NotepadModule({
                   variant="secondary"
                   size="sm"
                   onClick={handleDownloadNote}
-                  className="hidden sm:flex h-8 px-2 text-xs"
+                  className="flex h-8 px-2 text-xs"
                   title="Download Note (.md)"
                 >
                   <Download className="w-3.5 h-3.5" />
@@ -3516,7 +3643,7 @@ export function NotepadModule({
             </div>
 
             {/* View Mode Toggle Switch */}
-            <div className="flex items-center gap-0.5 bg-white p-0.5 rounded-md border-2 border-gray-200 shrink-0 ml-auto">
+            <div className="flex items-center gap-0.5 bg-white p-0.5 rounded-md border-2 border-gray-200 shrink-0 ml-auto max-md:sticky max-md:right-0 max-md:z-10 max-md:shadow-[-10px_0_8px_-2px_#F3F4F6,10px_0_0_0_#F3F4F6]">
               <button
                 type="button"
                 onClick={() => setViewMode("interactive")}
@@ -3529,7 +3656,7 @@ export function NotepadModule({
                 title="Interactive Document with Live Checkboxes"
               >
                 <CheckSquare className="w-3 h-3" />
-                <span>Interactive</span>
+                <span className="max-md:hidden">Interactive</span>
               </button>
               <button
                 type="button"
@@ -3543,7 +3670,7 @@ export function NotepadModule({
                 title="Free-typing Markdown editor with live bullets & checkboxes"
               >
                 <PenTool className="w-3 h-3" />
-                <span>Markdown</span>
+                <span className="max-md:hidden">Markdown</span>
               </button>
             </div>
           </div>
@@ -3559,7 +3686,7 @@ export function NotepadModule({
 
             {/* 2. Markdown Editor View: free typing with live preview (real headings, checkboxes, bullets) */}
             {viewMode === "markdown" && (
-              <div className="flex-1 flex flex-col p-4 sm:p-6 relative overflow-hidden bg-white">
+              <div className="flex-1 flex flex-col p-2 sm:p-6 relative overflow-hidden bg-white">
                 <div className="flex-1 min-h-0 overflow-hidden rounded-xl bg-[#F8FAFC] border-2 border-transparent focus-within:bg-white focus-within:border-[#3B82F6] transition-colors">
                   <MarkdownLiveEditor
                     handleRef={markdownEditorRef}
@@ -3579,7 +3706,7 @@ export function NotepadModule({
           </div>
 
           {/* Bottom Notepad Info Bar */}
-          <div className="px-6 py-2 bg-[#F3F4F6] border-t-2 border-gray-200 flex items-center justify-between text-xs font-bold text-gray-500 shrink-0">
+          <div className="px-4 md:px-6 py-2 bg-[#F3F4F6] border-t-2 border-gray-200 flex items-center justify-between text-xs font-bold text-gray-500 shrink-0">
             <div className="flex items-center gap-4">
               <span>{wordCount} words</span>
               <span>{charCount} characters</span>
@@ -3587,8 +3714,8 @@ export function NotepadModule({
             </div>
             <div className="flex items-center gap-3">
               <span className="hidden md:inline text-gray-400">💡 Type <code className="text-blue-600 bg-blue-50 px-1 py-0.5 rounded">/--checkbox task --/</code> or click Checkbox</span>
-              <span><kbd className="px-1.5 py-0.5 rounded bg-gray-200 text-gray-800 text-[10px]">Ctrl+Z</kbd> Undo</span>
-              <span><kbd className="px-1.5 py-0.5 rounded bg-gray-200 text-gray-800 text-[10px]">Ctrl+S</kbd> Save</span>
+              <span className="max-md:hidden"><kbd className="px-1.5 py-0.5 rounded bg-gray-200 text-gray-800 text-[10px]">Ctrl+Z</kbd> Undo</span>
+              <span className="max-md:hidden"><kbd className="px-1.5 py-0.5 rounded bg-gray-200 text-gray-800 text-[10px]">Ctrl+S</kbd> Save</span>
             </div>
           </div>
 
@@ -3648,7 +3775,7 @@ export function NotepadModule({
           {bubbleToolbar && bubbleToolbar.isOpen && (
             <div
               ref={bubbleToolbarRef}
-              className="fixed z-50 max-w-[calc(100vw-16px)] bg-white text-gray-700 p-1 rounded-xl border-2 border-gray-200 shadow-xl flex flex-wrap items-center gap-0.5 select-none"
+              className="fixed z-50 w-max max-w-[calc(100vw-16px)] bg-white text-gray-700 p-1 rounded-xl border-2 border-gray-200 shadow-xl flex flex-wrap items-center gap-0.5 select-none"
               onClick={(e) => e.stopPropagation()}
             >
               <button

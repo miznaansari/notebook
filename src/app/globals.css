@@ -43,8 +43,9 @@
     font-size: 0.875rem; /* text-sm standard (14px) */
   }
 
+  /* .keep-font-size opts out for inputs that are already 16px+ by design (headings, titles) */
   @media screen and (max-width: 768px) {
-    input:not([type="checkbox"]):not([type="radio"]),
+    input:not([type="checkbox"]):not([type="radio"]):not(.keep-font-size),
     select,
     textarea,
     .md-live-editor {

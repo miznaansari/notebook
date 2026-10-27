@@ -12,6 +12,8 @@ import { MeetingsModule } from "@/components/workspace/MeetingsModule";
 import { TasksModule } from "@/components/workspace/TasksModule";
 import { TemplatesModule } from "@/components/workspace/TemplatesModule";
 import { ExportModule } from "@/components/workspace/ExportModule";
+import { MobileWorkspaceSkeleton } from "@/components/workspace/MobileWorkspaceSkeleton";
+import { getLastProjectId, setLastProjectId } from "@/lib/last-open";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -75,7 +77,9 @@ export default function WorkspacePage() {
           const projData = await projRes.json();
           setProjects(projData.projects || []);
           if (projData.projects?.length > 0) {
-            setSelectedProjectId(projData.projects[0].id);
+            const lastProjectId = getLastProjectId();
+            const lastProject = projData.projects.find((p: ProjectSummary) => p.id === lastProjectId);
+            setSelectedProjectId((lastProject ?? projData.projects[0]).id);
           }
         }
       } catch (err) {
@@ -137,6 +141,7 @@ export default function WorkspacePage() {
 
   React.useEffect(() => {
     if (selectedProjectId) {
+      setLastProjectId(selectedProjectId);
       fetchProjectDetails(selectedProjectId);
     }
     return () => projectFetchRef.current?.abort();
@@ -367,19 +372,24 @@ export default function WorkspacePage() {
 
   if (isLoadingUser) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#F3F4F6]">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-10 h-10 border-4 border-[#3B82F6] border-t-transparent rounded-full animate-spin" />
-          <p className="text-xs font-bold uppercase tracking-wider text-gray-600">
-            Loading Workspace...
-          </p>
+      <>
+        <div className="md:hidden h-dvh flex flex-col">
+          <MobileWorkspaceSkeleton />
         </div>
-      </div>
+        <div className="hidden md:flex min-h-screen items-center justify-center bg-[#F3F4F6]">
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-10 h-10 border-4 border-[#3B82F6] border-t-transparent rounded-full animate-spin" />
+            <p className="text-xs font-bold uppercase tracking-wider text-gray-600">
+              Loading Workspace...
+            </p>
+          </div>
+        </div>
+      </>
     );
   }
 
   return (
-    <div className="h-screen w-screen flex overflow-hidden bg-white">
+    <div className="h-screen max-md:h-dvh w-screen flex overflow-hidden bg-white">
       {/* Left Projects & User Sidebar (Includes Brand & Profile) */}
       <Sidebar
         user={user}
@@ -401,11 +411,19 @@ export default function WorkspacePage() {
       />
 
       {/* Right Main Workspace View (Full remaining height & width for children) */}
-      <main className="flex-1 flex flex-col h-screen overflow-hidden bg-white">
+      <main className="flex-1 flex flex-col h-screen max-md:h-dvh overflow-hidden bg-white">
         {isLoadingProject ? (
-          /* Skeleton shaped like the workspace so the switch feels instant */
+          <>
+          {/* Phones: editor-shaped skeleton with a live header (menu button works while loading) */}
+          <MobileWorkspaceSkeleton
+            className="md:hidden"
+            projectName={projects.find((p) => p.id === selectedProjectId)?.name}
+            projectColor={projects.find((p) => p.id === selectedProjectId)?.color}
+            onOpenSidebar={() => setIsSidebarOpen(true)}
+          />
+          {/* Skeleton shaped like the workspace so the switch feels instant */}
           <div
-            className="flex-1 flex flex-col overflow-hidden animate-pulse"
+            className="flex-1 flex flex-col overflow-hidden animate-pulse max-md:hidden"
             aria-busy="true"
             aria-label="Loading project workspace"
           >
@@ -431,6 +449,7 @@ export default function WorkspacePage() {
               </div>
             </div>
           </div>
+          </>
         ) : activeProjectData ? (
           <>
             {/* Ultra-Compact Active Project Header & Tabs */}

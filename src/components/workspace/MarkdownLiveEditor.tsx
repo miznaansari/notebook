@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Annotation, EditorState, RangeSetBuilder } from "@codemirror/state";
+import { Annotation, Compartment, EditorState, RangeSetBuilder, Transaction } from "@codemirror/state";
 import {
   Decoration,
   type DecorationSet,
@@ -12,7 +12,7 @@ import {
   keymap,
   placeholder as placeholderExtension,
 } from "@codemirror/view";
-import { defaultKeymap } from "@codemirror/commands";
+import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 
 // Textarea-like handle, so the notepad's selection / insertion logic works unchanged on CodeMirror
 export interface MarkdownEditorHandle {
@@ -35,6 +35,9 @@ interface MarkdownLiveEditorProps {
   onToggleTask?: (lineStart: number) => void;
   onScroll?: () => void;
   placeholder?: string;
+  readOnly?: boolean;
+  // Built-in undo/redo. Off by default: the notepad runs its own undo stack for notes.
+  withHistory?: boolean;
   handleRef?: React.Ref<MarkdownEditorHandle>;
   className?: string;
 }
@@ -151,6 +154,11 @@ function buildDecorations(view: EditorView, onToggle: ToggleTask) {
   return { decorations: decorations.finish(), atomic: atomic.finish() };
 }
 
+const editableExtensions = (readOnly: boolean) => [
+  EditorView.editable.of(!readOnly),
+  EditorState.readOnly.of(readOnly),
+];
+
 const editorTheme = EditorView.theme({
   "&": { height: "100%", backgroundColor: "transparent", color: "#111827" },
   "&.cm-focused": { outline: "none" },
@@ -201,6 +209,8 @@ export function MarkdownLiveEditor({
   onToggleTask,
   onScroll,
   placeholder,
+  readOnly = false,
+  withHistory = false,
   handleRef,
   className,
 }: MarkdownLiveEditorProps) {
@@ -208,6 +218,9 @@ export function MarkdownLiveEditor({
   const viewRef = React.useRef<EditorView | null>(null);
   const initialValueRef = React.useRef(value);
   const placeholderRef = React.useRef(placeholder);
+  const withHistoryRef = React.useRef(withHistory);
+  const readOnlyRef = React.useRef(readOnly);
+  const [editableCompartment] = React.useState(() => new Compartment());
   const callbacksRef = React.useRef({ onChange, onKeyDown, onSelectionChange, onContextMenu, onToggleTask, onScroll });
 
   React.useLayoutEffect(() => {
@@ -250,7 +263,9 @@ export function MarkdownLiveEditor({
           livePreview,
           editorTheme,
           EditorView.lineWrapping,
+          withHistoryRef.current ? [history(), keymap.of(historyKeymap)] : [],
           keymap.of(defaultKeymap),
+          editableCompartment.of(editableExtensions(readOnlyRef.current)),
           placeholderRef.current ? placeholderExtension(placeholderRef.current) : [],
           EditorView.contentAttributes.of({ spellcheck: "true", "aria-label": "Markdown note editor" }),
           EditorView.domEventHandlers({
@@ -284,7 +299,11 @@ export function MarkdownLiveEditor({
       view.destroy();
       viewRef.current = null;
     };
-  }, []);
+  }, [editableCompartment]);
+
+  React.useLayoutEffect(() => {
+    viewRef.current?.dispatch({ effects: editableCompartment.reconfigure(editableExtensions(readOnly)) });
+  }, [readOnly, editableCompartment]);
 
   // Mirror outside changes (formatting, undo, AI edits, note switch) into the editor as a
   // minimal change, so CodeMirror maps the caret through it instead of resetting it
@@ -305,7 +324,7 @@ export function MarkdownLiveEditor({
 
     view.dispatch({
       changes: { from: start, to: endCurrent, insert: value.slice(start, endValue) },
-      annotations: syncFromProps.of(true),
+      annotations: [syncFromProps.of(true), Transaction.addToHistory.of(false)],
     });
   }, [value]);
 

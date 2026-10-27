@@ -35,6 +35,7 @@ model Project {
   tasks       FollowUpTask[]
   meetings    Meeting[]
   notes       Note[]
+  dailyBriefs DailyBrief[]
   user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   categories  QuestionCategory[]
   questions   Question[]
@@ -58,6 +59,21 @@ model Note {
 
   @@index([projectId])
   @@map("notes")
+}
+
+// One brief per project per calendar day. `date` is the user's local day (YYYY-MM-DD),
+// so "today" follows the user's clock rather than the server's timezone.
+model DailyBrief {
+  id        String   @id @default(cuid())
+  projectId String
+  date      String   @db.VarChar(10)
+  content   String   @db.LongText
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, date])
+  @@map("daily_briefs")
 }
 
 model QuestionCategory {

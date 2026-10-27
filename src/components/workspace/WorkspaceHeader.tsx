@@ -15,6 +15,7 @@ import {
   Archive,
   ArchiveRestore,
   Loader2,
+  MoreVertical,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -63,6 +64,33 @@ export function WorkspaceHeader({
   const nextMeetingQuestions = activeQuestions.filter((q) => q.forNextMeeting).length;
   const pendingTasks = project.tasks.filter((t) => t.status !== "COMPLETED").length;
   const mobileNavRef = React.useRef<HTMLDivElement>(null);
+
+  // Phone "more" menu for Edit / Archive / Delete (fixed-positioned: the header clips overflow)
+  const [mobileMenuPos, setMobileMenuPos] = React.useState<{ top: number; right: number } | null>(null);
+  const mobileMenuRef = React.useRef<HTMLDivElement>(null);
+  const mobileMenuButtonRef = React.useRef<HTMLButtonElement>(null);
+
+  React.useEffect(() => {
+    if (!mobileMenuPos) return;
+    const closeOnOutsidePress = (e: PointerEvent) => {
+      const target = e.target as Node;
+      if (!mobileMenuRef.current?.contains(target) && !mobileMenuButtonRef.current?.contains(target)) {
+        setMobileMenuPos(null);
+      }
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePress);
+    return () => document.removeEventListener("pointerdown", closeOnOutsidePress);
+  }, [mobileMenuPos]);
+
+  const toggleMobileMenu = () => {
+    const rect = mobileMenuButtonRef.current?.getBoundingClientRect();
+    setMobileMenuPos(mobileMenuPos || !rect ? null : { top: rect.bottom + 6, right: window.innerWidth - rect.right });
+  };
+
+  const runMobileMenuAction = (action?: () => void) => {
+    setMobileMenuPos(null);
+    action?.();
+  };
 
   const tabs: {
     id: WorkspaceTab;
@@ -141,13 +169,13 @@ export function WorkspaceHeader({
       {/* ========================================================================= */}
       <div className="md:hidden overflow-hidden">
         {/* Tier 1: Mobile Project Info & Action Buttons */}
-        <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 bg-white">
-          <div className="flex items-center gap-2 min-w-0">
+        <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-gray-100 bg-white">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
             {onToggleSidebar && (
               <button
                 type="button"
                 onClick={onToggleSidebar}
-                className="p-1.5 rounded-lg bg-gray-50 hover:bg-gray-100 active:bg-gray-200 text-gray-700 transition shrink-0 border border-gray-200"
+                className="p-2 rounded-lg bg-gray-50 hover:bg-gray-100 active:bg-gray-200 text-gray-700 transition shrink-0 border border-gray-200"
                 aria-label="Toggle sidebar"
               >
                 <Menu className="w-4 h-4" />
@@ -159,7 +187,7 @@ export function WorkspaceHeader({
                 className="w-2.5 h-2.5 rounded-full shrink-0"
                 style={{ backgroundColor: project.color || "#3B82F6" }}
               />
-              <h1 className="text-sm font-bold text-gray-900 truncate max-w-[140px]">
+              <h1 className="text-sm font-bold text-gray-900 truncate">
                 {project.name}
               </h1>
               {project.isArchived && (
@@ -168,59 +196,85 @@ export function WorkspaceHeader({
                 </span>
               )}
               {project.clientName && (
-                <span className="text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-semibold truncate max-w-[90px]">
+                <span className="text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-semibold truncate max-w-[90px] shrink-0">
                   {project.clientName}
                 </span>
               )}
             </div>
           </div>
 
-          <div className="flex items-center gap-1 shrink-0">
-            {onArchiveProject && (
-              <button
-                onClick={onArchiveProject}
-                disabled={isArchiving}
-                title={
-                  isArchiving
-                    ? (project.isArchived ? "Restoring project..." : "Archiving project...")
-                    : (project.isArchived ? "Restore Project from Archive" : "Archive Project")
-                }
-                className={cn(
-                  "p-1.5 rounded-md transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed",
-                  project.isArchived
-                    ? "text-amber-600 hover:text-amber-800 hover:bg-amber-50 active:bg-amber-100"
-                    : "text-gray-400 hover:text-amber-600 hover:bg-amber-50 active:bg-amber-100"
-                )}
-              >
-                {isArchiving ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-600" />
-                ) : project.isArchived ? (
-                  <ArchiveRestore className="w-3.5 h-3.5" />
-                ) : (
-                  <Archive className="w-3.5 h-3.5" />
-                )}
-              </button>
-            )}
+          {(onEditProject || onArchiveProject || onDeleteProject) && (
+            <button
+              ref={mobileMenuButtonRef}
+              type="button"
+              onClick={toggleMobileMenu}
+              aria-label="Project actions"
+              aria-haspopup="menu"
+              aria-expanded={mobileMenuPos !== null}
+              className={cn(
+                "p-2 rounded-lg text-gray-600 hover:bg-gray-100 active:bg-gray-200 transition shrink-0 cursor-pointer",
+                mobileMenuPos && "bg-gray-100 text-gray-900"
+              )}
+            >
+              {isArchiving ? (
+                <Loader2 className="w-4 h-4 animate-spin text-amber-600" />
+              ) : (
+                <MoreVertical className="w-4 h-4" />
+              )}
+            </button>
+          )}
+        </div>
+
+        {mobileMenuPos && (
+          <div
+            ref={mobileMenuRef}
+            role="menu"
+            style={{ top: mobileMenuPos.top, right: mobileMenuPos.right }}
+            className="fixed z-50 w-52 bg-white rounded-xl border-2 border-gray-200 shadow-xl p-1"
+          >
             {onEditProject && (
               <button
-                onClick={onEditProject}
-                title="Edit Project"
-                className="p-1.5 text-gray-500 hover:text-gray-900 active:bg-gray-100 rounded-md transition cursor-pointer"
+                type="button"
+                role="menuitem"
+                onClick={() => runMobileMenuAction(onEditProject)}
+                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-semibold text-gray-700 active:bg-blue-50 hover:bg-blue-50 transition cursor-pointer"
               >
-                <Edit className="w-3.5 h-3.5" />
+                <Edit className="w-4 h-4 text-gray-400" />
+                <span>Edit project</span>
+              </button>
+            )}
+            {onArchiveProject && (
+              <button
+                type="button"
+                role="menuitem"
+                disabled={isArchiving}
+                onClick={() => runMobileMenuAction(onArchiveProject)}
+                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-semibold text-gray-700 active:bg-amber-50 hover:bg-amber-50 transition cursor-pointer disabled:opacity-60"
+              >
+                {project.isArchived ? (
+                  <ArchiveRestore className="w-4 h-4 text-amber-600" />
+                ) : (
+                  <Archive className="w-4 h-4 text-gray-400" />
+                )}
+                <span>{project.isArchived ? "Restore from archive" : "Archive project"}</span>
               </button>
             )}
             {onDeleteProject && (
-              <button
-                onClick={onDeleteProject}
-                title="Delete Project"
-                className="p-1.5 text-gray-400 hover:text-red-600 active:bg-red-50 rounded-md transition cursor-pointer"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
+              <>
+                <div className="my-1 h-px bg-gray-100" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => runMobileMenuAction(onDeleteProject)}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-semibold text-red-600 active:bg-red-50 hover:bg-red-50 transition cursor-pointer"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>Delete project</span>
+                </button>
+              </>
             )}
           </div>
-        </div>
+        )}
 
         {/* Tier 2: Swipeable Touch Tab Strip for Mobile */}
         <div
