@@ -73,3 +73,46 @@ export function openTaskLines(content: string): string[] {
 }
 
 export const DAILY_BRIEF_TEMPLATE = "## Top priorities\n- [ ] \n\n## Meetings\n- \n\n## Notes\n";
+
+// Inline markdown a pasted summary shouldn't carry: [[links]], emphasis, code, highlight, underline
+function plainInline(text: string): string {
+  return text
+    .replace(/\[\[([^[\]\n]+?)\]\]/g, "$1")
+    .replace(/(\*\*|__|~~|==)(.+?)\1/g, "$2")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/<\/?u>/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// One point per meaningful brief line. Headings are dropped; unchecked tasks are marked pending.
+export function briefToPoints(content: string): string[] {
+  const points: string[] = [];
+  for (const raw of content.split("\n")) {
+    const line = raw.trim();
+    if (!line || /^#{1,6}\s/.test(line) || line === "---") continue;
+
+    let text = line;
+    let pending = false;
+    const task = line.match(/^-\s*\[([ xX])?\]\s*(.*)$/);
+    if (task) {
+      pending = !(task[1] === "x" || task[1] === "X");
+      text = task[2];
+    } else {
+      text = text.replace(/^(?:[-*•]|\d+[.)])(?:\s+|$)/, "").replace(/^>\s*/, "");
+    }
+
+    text = plainInline(text);
+    if (text) points.push(pending ? `${text} (pending)` : text);
+  }
+  return points;
+}
+
+// "Project name" followed by "- point" lines, one block per project that has points
+export function buildWorkSummary(entries: { projectName: string; content: string }[]): string {
+  return entries
+    .map((entry) => ({ name: entry.projectName, points: briefToPoints(entry.content) }))
+    .filter((entry) => entry.points.length > 0)
+    .map((entry) => `${entry.name}\n${entry.points.map((point) => `- ${point}`).join("\n")}`)
+    .join("\n\n");
+}

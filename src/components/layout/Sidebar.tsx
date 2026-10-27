@@ -24,6 +24,7 @@ import {
   User as UserIcon,
   X,
   Loader2,
+  ClipboardList,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -55,6 +56,7 @@ interface SidebarProps {
   selectedProjectId: string | null;
   onSelectProject: (id: string) => void;
   onNewProject: () => void;
+  onOpenWorkSummary?: () => void;
   onArchiveProject?: (id: string, newStatus?: boolean) => void;
   onReorderProjects?: (updatedProjects: ProjectSummary[]) => void;
   archivingProjectId?: string | null;
@@ -68,6 +70,7 @@ export function Sidebar({
   selectedProjectId,
   onSelectProject,
   onNewProject,
+  onOpenWorkSummary,
   onArchiveProject,
   onReorderProjects,
   archivingProjectId,
@@ -195,6 +198,22 @@ export function Sidebar({
             <Plus className="w-4 h-4" strokeWidth={3} />
             <span>New Project</span>
           </Button>
+
+          {onOpenWorkSummary && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                onOpenWorkSummary();
+                onCloseMobile();
+              }}
+              className="w-full gap-1.5 text-xs h-9 justify-center shadow-none bg-blue-50 text-[#2563EB] hover:bg-blue-100"
+              title="Today's points from every project's Daily Brief"
+            >
+              <ClipboardList className="w-4 h-4" />
+              <span>Today&apos;s Work Summary</span>
+            </Button>
+          )}
 
           {/* Search Input */}
           <div className="relative">

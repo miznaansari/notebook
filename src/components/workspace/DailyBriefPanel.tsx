@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MarkdownLiveEditor, MD_TASK_PREFIX, type MarkdownEditorHandle } from "./MarkdownLiveEditor";
+import { NoteLinkPicker, type LinkableNote, type PickerAnchor } from "./NoteLinkPicker";
 import {
   DAILY_BRIEF_TEMPLATE,
   addDays,
@@ -27,6 +28,15 @@ import {
   toDateKey,
   type DailyBriefSummary,
 } from "@/lib/daily-brief";
+
+// Dispatch with a Promise[] as detail: open brief panels push their pending save onto it
+export const FLUSH_DAILY_BRIEFS_EVENT = "notepad:flush-daily-briefs";
+
+export async function flushOpenDailyBriefs() {
+  const saves: Promise<void>[] = [];
+  window.dispatchEvent(new CustomEvent(FLUSH_DAILY_BRIEFS_EVENT, { detail: saves }));
+  await Promise.all(saves);
+}
 
 // Today's date key, kept current across midnight and when a suspended tab (phones) comes back
 export function useTodayKey() {
@@ -65,6 +75,10 @@ interface DailyBriefPanelProps {
   // Days that have a brief, newest first; null while the index is loading
   briefs: DailyBriefSummary[] | null;
   onSummaryChange: (date: string, summary: DailyBriefSummary | null) => void;
+  // [[Note Title]] references to the project's notes
+  linkTitles?: Set<string>;
+  linkNotes?: LinkableNote[];
+  onOpenLink?: (title: string) => void;
   onBack?: () => void;
   className?: string;
 }
@@ -79,6 +93,9 @@ export function DailyBriefPanel({
   todayKey,
   briefs,
   onSummaryChange,
+  linkTitles,
+  linkNotes = [],
+  onOpenLink,
   onBack,
   className,
 }: DailyBriefPanelProps) {
@@ -99,6 +116,7 @@ export function DailyBriefPanel({
   const [saveStatus, setSaveStatus] = React.useState<SaveStatus>("saved");
   const [isCalendarOpen, setIsCalendarOpen] = React.useState(false);
   const [isCarryingOver, setIsCarryingOver] = React.useState(false);
+  const [linkPicker, setLinkPicker] = React.useState<{ anchor: PickerAnchor; from: number; to: number } | null>(null);
 
   const editorRef = React.useRef<MarkdownEditorHandle>(null);
   const pendingSaveRef = React.useRef<{ date: string; content: string } | null>(null);
@@ -159,14 +177,20 @@ export function DailyBriefPanel({
     [projectId, onSummaryChange]
   );
 
-  // Write pending edits when leaving the brief, the tab, or the page
+  // Write pending edits when leaving the brief, the tab, or the page, or when asked to
+  // (the work summary does this so it reads what was just typed)
   React.useEffect(() => {
     const onVisibilityChange = () => {
       if (document.visibilityState === "hidden") flushSave(true);
     };
+    const onFlushRequest = (e: Event) => {
+      (e as CustomEvent<Promise<void>[]>).detail.push(flushSave());
+    };
     document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener(FLUSH_DAILY_BRIEFS_EVENT, onFlushRequest);
     return () => {
       document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener(FLUSH_DAILY_BRIEFS_EVENT, onFlushRequest);
       flushSave(true);
     };
   }, [flushSave]);
@@ -180,6 +204,31 @@ export function DailyBriefPanel({
     setSaveStatus("unsaved");
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => flushSave(), 800);
+  };
+
+  const handleEditorChange = (value: string, cursorPos: number) => {
+    const grew = value.length > (content?.length ?? 0);
+    updateContent(value);
+    if (grew && value.slice(cursorPos - 2, cursorPos) === "[[" && !value.slice(cursorPos).startsWith("]]")) {
+      requestAnimationFrame(() => {
+        const coords = editorRef.current?.getSelectionCoords();
+        if (coords) {
+          setLinkPicker({
+            anchor: { left: coords.left, top: coords.top, bottom: coords.bottom },
+            from: cursorPos - 2,
+            to: cursorPos,
+          });
+        }
+      });
+    }
+  };
+
+  const insertNoteLink = (title: string) => {
+    if (!linkPicker || content === undefined) return;
+    const link = `[[${title.trim()}]]`;
+    updateContent(content.slice(0, linkPicker.from) + link + content.slice(linkPicker.to));
+    placeCaret(linkPicker.from + link.length);
+    setLinkPicker(null);
   };
 
   const goToDate = (date: string) => {
@@ -431,8 +480,10 @@ export function DailyBriefPanel({
                 key={viewDate}
                 handleRef={editorRef}
                 value={content}
-                onChange={updateContent}
+                onChange={handleEditorChange}
                 onToggleTask={toggleTaskAt}
+                linkTitles={linkTitles}
+                onOpenLink={onOpenLink}
                 onKeyDown={(e) => {
                   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
                     e.preventDefault();
@@ -452,6 +503,19 @@ export function DailyBriefPanel({
           </>
         )}
       </div>
+
+      {linkPicker && (
+        <NoteLinkPicker
+          notes={linkNotes}
+          anchor={linkPicker.anchor}
+          onSelect={insertNoteLink}
+          onClose={(reason) => {
+            const caret = linkPicker.to;
+            setLinkPicker(null);
+            if (reason === "escape") placeCaret(caret);
+          }}
+        />
+      )}
 
       {/* Footer */}
       <div className="px-4 md:px-6 py-2 bg-[#F3F4F6] border-t-2 border-gray-200 flex items-center justify-between gap-3 text-xs font-bold text-gray-500 shrink-0">

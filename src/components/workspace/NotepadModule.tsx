@@ -56,6 +56,8 @@ import {
   WandSparkles,
   CalendarDays,
   History,
+  Link2,
+  ArrowLeft,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -66,6 +68,8 @@ import { MarkdownLiveEditor, MD_TASK_PREFIX, type MarkdownEditorHandle } from ".
 import { getLastNoteId, setLastNoteId } from "@/lib/last-open";
 import { DailyBriefPanel, useTodayKey } from "./DailyBriefPanel";
 import { formatBriefDate, type DailyBriefSummary } from "@/lib/daily-brief";
+import { extractNoteLinkTitles, isDefaultNoteTitle, normalizeNoteTitle, relinkNoteTitle } from "@/lib/note-links";
+import { NoteLinkPicker, type PickerAnchor } from "./NoteLinkPicker";
 import { VoiceMicButton } from "@/components/ui/voice-mic-button";
 import { cn, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
@@ -165,11 +169,29 @@ const taskMenuEntries = (isEmailTask: boolean): AiMenuEntry[] => [
     : { id: "execute_task", label: "Generate deliverable", hint: "Draft AI solution or template", icon: Sparkles },
 ];
 
+// Where a picked [[note link]] goes: a range of the raw markdown, or of one Interactive-view line's visible text
+type LinkInsertTarget =
+  | { mode: "markdown"; from: number; to: number }
+  | { mode: "interactive"; lineIdx: number; from: number; to: number };
+
+// Length of the markdown prefix the Interactive view hides on a line (mirrors renderInteractiveDocument);
+// null for lines whose visible text doesn't map onto the raw line (/--checkbox syntax, dividers)
+function interactivePrefixLength(line: string): number | null {
+  if (line.startsWith("# ")) return 2;
+  if (line.startsWith("## ")) return 3;
+  if (line.startsWith("### ")) return 4;
+  const task = line.match(/^(\s*)-\s*\[([ xX])?\]\s*/);
+  if (task) return task[0].length;
+  if (/^\s*\/--checkbox/i.test(line) || line.trim() === "---") return null;
+  const bullet = line.match(/^(\s*)([-*•])\s+/);
+  if (bullet) return bullet[0].length;
+  if (line.startsWith("> ")) return 2;
+  return 0;
+}
+
 // Stored as the "last open note" when the Daily Brief was open
 const DAILY_BRIEF_ID = "__daily_brief__";
 
-// Titles that mean the user never named the note, so AI may name it
-const DEFAULT_NOTE_TITLES = ["", "new note", "untitled note", "untitled"];
 
 export function NotepadModule({
   projectId,
@@ -191,6 +213,13 @@ export function NotepadModule({
     return notes.length > 0 ? notes[0].id : null;
   });
   const isDailyBriefOpenRef = React.useRef(isDailyBriefOpen);
+  // Notes (or the Daily Brief) left by following a [[link]], for the "Back to ..." button
+  const [linkBackStack, setLinkBackStack] = React.useState<string[]>([]);
+  const [linkPicker, setLinkPicker] = React.useState<{
+    anchor: PickerAnchor;
+    target: LinkInsertTarget;
+    initialQuery?: string;
+  } | null>(null);
   React.useEffect(() => {
     isDailyBriefOpenRef.current = isDailyBriefOpen;
   }, [isDailyBriefOpen]);
@@ -221,6 +250,12 @@ export function NotepadModule({
       });
     return () => controller.abort();
   }, [projectId]);
+
+  // Normalized titles that a [[link]] can resolve to
+  const linkTitles = React.useMemo(
+    () => new Set(notes.filter((n) => !isDefaultNoteTitle(n.title)).map((n) => normalizeNoteTitle(n.title))),
+    [notes]
+  );
 
   const handleBriefSummaryChange = React.useCallback((date: string, summary: DailyBriefSummary | null) => {
     setBriefIndex((prev) => {
@@ -359,7 +394,7 @@ export function NotepadModule({
       isGeneratingDescRef.current = true;
       const wantsTitle =
         forceTitle ||
-        DEFAULT_NOTE_TITLES.includes(title.trim().toLowerCase()) ||
+        isDefaultNoteTitle(title) ||
         aiTitlesRef.current[noteId] === title;
       try {
         const res = await fetch("/api/ai", {
@@ -415,11 +450,23 @@ export function NotepadModule({
           }
         }
         onNotesChange(notesRef.current.map((n) => (n.id === noteId ? { ...n, ...patch } : n)));
-        await fetch(`/api/projects/${projectId}/notes/${noteId}`, {
+        const saveRes = await fetch(`/api/projects/${projectId}/notes/${noteId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(patch),
         });
+        const relinked: { id: string; content: string }[] = saveRes.ok ? (await saveRes.json()).relinkedNotes ?? [] : [];
+        if (relinked.length > 0 && generatedTitle) {
+          const byId = new Map(relinked.map((n) => [n.id, n.content]));
+          const openId = latestActiveIdRef.current;
+          if (openId && byId.has(openId)) {
+            const relinkedLive = relinkNoteTitle(latestContentRef.current, title, generatedTitle);
+            setCurrentContent(relinkedLive);
+            latestContentRef.current = relinkedLive;
+            byId.set(openId, relinkedLive);
+          }
+          onNotesChange(notesRef.current.map((n) => (byId.has(n.id) ? { ...n, content: byId.get(n.id)! } : n)));
+        }
         return generatedTitle || null;
       } catch (err) {
         console.error("Auto note title/description generation failed:", err);
@@ -502,8 +549,17 @@ export function NotepadModule({
         if (res.ok) {
           const data = await res.json();
           setSaveStatus("saved");
+          const relinked = new Map<string, string>(
+            (data.relinkedNotes ?? []).map((n: { id: string; content: string }) => [n.id, n.content])
+          );
           onNotesChange(
-            notes.map((n) => (n.id === noteId ? { ...n, ...data.note } : n))
+            notes.map((n) =>
+              n.id === noteId
+                ? { ...n, ...data.note }
+                : relinked.has(n.id)
+                  ? { ...n, content: relinked.get(n.id)! }
+                  : n
+            )
           );
         } else {
           setSaveStatus("unsaved");
@@ -1415,6 +1471,18 @@ export function NotepadModule({
       nextVal = nextVal.replace(/\/--checkbox\s*(.*?)\s*--\//gi, "- [ ] $1");
     }
 
+    // Typed "[[": offer the note link picker at the caret (layout is read after CodeMirror's update)
+    if (nextVal.length > currentContent.length && nextVal.slice(cursorPos - 2, cursorPos) === "[[" && !nextVal.slice(cursorPos).startsWith("]]")) {
+      requestAnimationFrame(() => {
+        const coords = markdownEditorRef.current?.getSelectionCoords();
+        if (!coords) return;
+        setLinkPicker({
+          anchor: { left: coords.left, top: coords.top, bottom: coords.bottom },
+          target: { mode: "markdown", from: cursorPos - 2, to: cursorPos },
+        });
+      });
+    }
+
     setCurrentContent(nextVal);
     latestContentRef.current = nextVal;
     scheduleAutoSave();
@@ -1868,6 +1936,7 @@ export function NotepadModule({
   const updateLineContent = (lineIndex: number, newText: string, lineType: string, isChecked?: boolean) => {
     const lines = currentContent.split("\n");
     if (lineIndex < 0 || lineIndex >= lines.length) return;
+    const oldLine = lines[lineIndex];
 
     if (lineType === "task") {
       let cleanText = newText;
@@ -1914,6 +1983,23 @@ export function NotepadModule({
     typingTimerRef.current = setTimeout(() => {
       pushHistorySnapshot(newFull);
     }, 600);
+
+    // Typed "[[": offer the note link picker under this line
+    const caret = activeInteractiveLineRef.current.cursorPos;
+    if (
+      lines[lineIndex].length > oldLine.length &&
+      activeInteractiveLineRef.current.lineIdx === lineIndex &&
+      newText.slice(caret - 2, caret) === "[[" &&
+      !newText.slice(caret).startsWith("]]")
+    ) {
+      const rect = lineInputRefs.current[lineIndex]?.getBoundingClientRect();
+      if (rect) {
+        setLinkPicker({
+          anchor: { left: rect.left, top: rect.top, bottom: rect.bottom },
+          target: { mode: "interactive", lineIdx: lineIndex, from: caret - 2, to: caret },
+        });
+      }
+    }
   };
 
   // Insert a new line directly after a line in the document and focus it
@@ -2406,6 +2492,131 @@ export function NotepadModule({
     }
   };
 
+  // Follow a [[link]]: open the note with that title, or create it first if none exists yet
+  const openNoteLink = async (title: string) => {
+    const fromId = isDailyBriefOpen ? DAILY_BRIEF_ID : activeNoteId;
+    const existing = notes.find((n) => normalizeNoteTitle(n.title) === normalizeNoteTitle(title));
+    if (existing && !isDailyBriefOpen && existing.id === activeNoteId) return;
+
+    if (existing) {
+      if (fromId) setLinkBackStack((prev) => [...prev, fromId].slice(-20));
+      handleSelectNote(existing.id);
+      return;
+    }
+
+    try {
+      if (activeNoteId && saveStatus === "unsaved") {
+        if (autoSaveTimeoutRef.current) clearTimeout(autoSaveTimeoutRef.current);
+        await saveNoteToServer(
+          activeNoteId,
+          latestTitleRef.current,
+          latestContentRef.current,
+          latestTagsRef.current,
+          latestPinnedRef.current,
+          latestDescriptionRef.current
+        );
+      }
+      const res = await fetch(`/api/projects/${projectId}/notes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: title.trim(), content: `# ${title.trim()}\n`, tags: "General" }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const created: NoteItem = (await res.json()).note;
+      onNotesChange([created, ...notesRef.current]);
+      if (fromId) setLinkBackStack((prev) => [...prev, fromId].slice(-20));
+      lastLoadedNoteIdRef.current = null;
+      setActiveNoteId(created.id);
+      setIsDailyBriefOpen(false);
+      setMobileView("editor");
+      toast.success(`Created note "${created.title}"`);
+    } catch (err) {
+      console.error("Failed to create linked note:", err);
+      toast.error("Couldn't create that note");
+    }
+  };
+
+  // Most recent place left via a link that still exists
+  const backTargetId =
+    [...linkBackStack].reverse().find((id) => id === DAILY_BRIEF_ID || notes.some((n) => n.id === id)) ?? null;
+  const backTargetLabel =
+    backTargetId === DAILY_BRIEF_ID ? "Daily Brief" : notes.find((n) => n.id === backTargetId)?.title || "Untitled Note";
+
+  const goBackFromLink = () => {
+    if (!backTargetId) return;
+    setLinkBackStack(linkBackStack.slice(0, linkBackStack.lastIndexOf(backTargetId)));
+    if (backTargetId === DAILY_BRIEF_ID) handleOpenDailyBrief();
+    else handleSelectNote(backTargetId);
+  };
+
+  const openLinkPickerAtCursor = (e: React.MouseEvent<HTMLElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const anchor = { left: rect.left, top: rect.top, bottom: rect.bottom };
+    if (viewMode === "markdown") {
+      const editor = markdownEditorRef.current;
+      if (!editor) return;
+      const from = editor.selectionStart;
+      const to = editor.selectionEnd;
+      setLinkPicker({ anchor, target: { mode: "markdown", from, to }, initialQuery: editor.value.slice(from, to).trim() });
+    } else {
+      const { lineIdx, cursorPos } = activeInteractiveLineRef.current;
+      setLinkPicker({ anchor, target: { mode: "interactive", lineIdx, from: cursorPos, to: cursorPos } });
+    }
+  };
+
+  const insertNoteLink = (title: string) => {
+    if (!linkPicker) return;
+    const { target } = linkPicker;
+    const link = `[[${title.trim()}]]`;
+    setLinkPicker(null);
+
+    const before = latestContentRef.current;
+    let next: string;
+    if (target.mode === "markdown") {
+      next = before.slice(0, target.from) + link + before.slice(target.to);
+    } else {
+      const lines = before.split("\n");
+      const line = lines[target.lineIdx] ?? "";
+      const prefix = interactivePrefixLength(line);
+      lines[target.lineIdx] =
+        prefix === null
+          ? `${line} ${link}`
+          : line.slice(0, prefix + target.from) + link + line.slice(prefix + target.to);
+      next = lines.join("\n");
+    }
+
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    pushHistorySnapshot(before);
+    pushHistorySnapshot(next);
+    setCurrentContent(next);
+    latestContentRef.current = next;
+    scheduleAutoSave();
+
+    const caret = target.from + link.length;
+    if (target.mode === "markdown") {
+      setTimeout(() => {
+        markdownEditorRef.current?.focus();
+        markdownEditorRef.current?.setSelectionRange(caret, caret);
+      }, 10);
+    } else {
+      setPendingFocus({ lineIdx: target.lineIdx, cursorPos: caret });
+    }
+  };
+
+  const closeLinkPicker = (reason: "escape" | "outside") => {
+    const target = linkPicker?.target;
+    setLinkPicker(null);
+    if (reason !== "escape" || !target) return;
+    if (target.mode === "markdown") {
+      setTimeout(() => {
+        markdownEditorRef.current?.focus();
+        markdownEditorRef.current?.setSelectionRange(target.to, target.to);
+      }, 10);
+    } else {
+      setPendingFocus({ lineIdx: target.lineIdx, cursorPos: target.to });
+    }
+  };
+
   const handleDeleteNote = async (id: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     if (!confirm("Are you sure you want to delete this note?")) return;
@@ -2477,6 +2688,37 @@ export function NotepadModule({
   // Render Interactive Document directly inside Notepad Canvas (Rich Editable Lines with Live Checkboxes)
   const renderInteractiveDocument = () => {
     const rawLines = currentContent.split("\n");
+
+    // Lines are plain text inputs, so their [[links]] are also shown as clickable chips beside the text
+    const renderLineLinks = (text: string) => {
+      const titles = extractNoteLinkTitles(text);
+      if (titles.length === 0) return null;
+      return (
+        <div className="flex flex-wrap items-center justify-end gap-1 shrink-0 max-w-[45%] sm:max-w-[40%] pt-0.5">
+          {titles.map((title) => {
+            const exists = linkTitles.has(normalizeNoteTitle(title));
+            return (
+              <button
+                key={title}
+                type="button"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={() => openNoteLink(title)}
+                title={exists ? `Open "${title}"` : `Create note "${title}"`}
+                className={cn(
+                  "flex items-center gap-1 max-w-full px-1.5 py-0.5 rounded-md text-[11px] font-semibold transition cursor-pointer",
+                  exists
+                    ? "bg-blue-50 text-[#2563EB] border border-blue-200 hover:bg-blue-100"
+                    : "text-gray-500 border border-dashed border-gray-400 hover:border-[#3B82F6] hover:text-[#3B82F6]"
+                )}
+              >
+                {exists ? <FileText className="w-3 h-3 shrink-0" /> : <Plus className="w-3 h-3 shrink-0" />}
+                <span className="truncate">{title}</span>
+              </button>
+            );
+          })}
+        </div>
+      );
+    };
 
     const handleLineMouseDown = (idx: number, e: React.MouseEvent) => {
       if (e.button !== 0) return; // Only primary left-click
@@ -2826,6 +3068,7 @@ export function NotepadModule({
 
                 {/* Right / Mobile Action Badges */}
                 <div className="relative flex items-center gap-1 sm:gap-1.5 shrink-0 self-start">
+                  {renderLineLinks(taskText)}
                   <div className="relative inline-block">
                     <button
                       type="button"
@@ -2925,6 +3168,7 @@ export function NotepadModule({
                   placeholder="Bullet point..."
                   className="flex-1 text-sm text-gray-800 bg-transparent border-none outline-none focus:bg-blue-50/50 rounded px-1 py-0 resize-none overflow-hidden leading-relaxed break-words whitespace-pre-wrap"
                 />
+                {renderLineLinks(bText)}
               </div>
             );
           }
@@ -3052,6 +3296,7 @@ export function NotepadModule({
                 placeholder={idx === 0 ? "Type note text or '/--checkbox <task> --/' for a checkbox..." : ""}
                 className="w-full text-sm text-gray-800 bg-transparent border-none outline-none focus:bg-blue-50/40 rounded px-1 -mx-1 py-0 resize-none overflow-hidden leading-relaxed break-words whitespace-pre-wrap"
               />
+              {renderLineLinks(line)}
             </div>
           );
         })}
@@ -3156,10 +3401,14 @@ export function NotepadModule({
               <div
                 role="button"
                 tabIndex={0}
-                onClick={handleOpenDailyBrief}
+                onClick={() => {
+                  setLinkBackStack([]);
+                  handleOpenDailyBrief();
+                }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
+                    setLinkBackStack([]);
                     handleOpenDailyBrief();
                   }
                 }}
@@ -3235,7 +3484,10 @@ export function NotepadModule({
               return (
                 <div
                   key={note.id}
-                  onClick={() => handleSelectNote(note.id)}
+                  onClick={() => {
+                    setLinkBackStack([]);
+                    handleSelectNote(note.id);
+                  }}
                   className={cn(
                     "group p-3.5 rounded-lg cursor-pointer transition-all duration-150 select-none relative active:scale-[0.98]",
                     isSelected
@@ -3302,6 +3554,9 @@ export function NotepadModule({
           todayKey={todayKey}
           briefs={briefIndex}
           onSummaryChange={handleBriefSummaryChange}
+          linkTitles={linkTitles}
+          linkNotes={notes}
+          onOpenLink={openNoteLink}
           onBack={() => setMobileView("list")}
           className={mobileView === "list" ? "hidden lg:flex" : "flex"}
         />
@@ -3505,6 +3760,18 @@ export function NotepadModule({
             </div>
           </div>
 
+          {/* Back to where a [[link]] was followed from */}
+          {backTargetId && (
+            <button
+              type="button"
+              onClick={goBackFromLink}
+              className="flex items-center gap-1.5 px-3 sm:px-4 py-1.5 bg-blue-50 border-b border-blue-100 text-xs font-bold text-[#2563EB] hover:bg-blue-100 transition cursor-pointer text-left shrink-0"
+            >
+              <ArrowLeft className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">Back to {backTargetLabel}</span>
+            </button>
+          )}
+
           {/* Formatting Ribbon */}
           <div className="px-2 sm:px-4 py-1.5 bg-[#F3F4F6] border-b-2 border-gray-200 flex items-center justify-between gap-2 overflow-x-auto select-none no-scrollbar">
             <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
@@ -3612,6 +3879,15 @@ export function NotepadModule({
                 <CheckSquare className="w-4 h-4 text-[#3B82F6]" />
                 <span className="text-[11px] whitespace-nowrap">Checkbox</span>
               </button>
+              <button
+                type="button"
+                onClick={openLinkPickerAtCursor}
+                className="p-1.5 rounded hover:bg-gray-200 text-gray-700 transition flex items-center gap-1 cursor-pointer shrink-0"
+                title="Link to another note (or type [[)"
+              >
+                <Link2 className="w-4 h-4" />
+                <span className="text-[11px] whitespace-nowrap max-md:hidden">Link</span>
+              </button>
 
               <div className="w-px h-4 bg-gray-300 mx-0.5 sm:mx-1 shrink-0" />
 
@@ -3696,6 +3972,8 @@ export function NotepadModule({
                     onSelectionChange={handleSelectText}
                     onContextMenu={handleContextMenu}
                     onToggleTask={toggleMarkdownTaskAt}
+                    linkTitles={linkTitles}
+                    onOpenLink={openNoteLink}
                     onScroll={() => setBubbleToolbar(null)}
                     placeholder={"Start typing your notes...\n\n✨ Shortcuts:\n• Type '/--checkbox create email templete --/' for Instant Checkbox\n• Type '/' for Notion-Style Slash Commands\n• Type '- ' for Bullet Points\n• Type '1. ' for Numbered Lists\n• Type '[] ' for To-Do Checklist\n• Type '# ' for Large Heading"}
                     className="md-live-editor h-full font-sans text-sm"
@@ -3906,6 +4184,17 @@ export function NotepadModule({
             </Button>
           </div>
         </div>
+      )}
+
+      {linkPicker && (
+        <NoteLinkPicker
+          notes={notes}
+          anchor={linkPicker.anchor}
+          initialQuery={linkPicker.initialQuery}
+          excludeNoteId={activeNoteId}
+          onSelect={insertNoteLink}
+          onClose={closeLinkPicker}
+        />
       )}
 
       {/* 🤖 AI Task Deliverable Modal */}

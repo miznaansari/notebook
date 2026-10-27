@@ -13,6 +13,7 @@ import { TasksModule } from "@/components/workspace/TasksModule";
 import { TemplatesModule } from "@/components/workspace/TemplatesModule";
 import { ExportModule } from "@/components/workspace/ExportModule";
 import { MobileWorkspaceSkeleton } from "@/components/workspace/MobileWorkspaceSkeleton";
+import { WorkSummaryDialog } from "@/components/workspace/WorkSummaryDialog";
 import { getLastProjectId, setLastProjectId } from "@/lib/last-open";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
@@ -42,6 +43,7 @@ export default function WorkspacePage() {
   const [isLoadingUser, setIsLoadingUser] = React.useState(true);
   const [isLoadingProject, setIsLoadingProject] = React.useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(false);
+  const [isWorkSummaryOpen, setIsWorkSummaryOpen] = React.useState(false);
 
   // Modals state
   const [isNewProjectModalOpen, setIsNewProjectModalOpen] = React.useState(false);
@@ -403,6 +405,7 @@ export default function WorkspacePage() {
           setProjectColor("#3B82F6");
           setIsNewProjectModalOpen(true);
         }}
+        onOpenWorkSummary={() => setIsWorkSummaryOpen(true)}
         onArchiveProject={(id, status) => handleToggleArchiveProject(id, status)}
         onReorderProjects={handleReorderProjects}
         archivingProjectId={archivingProjectId}
@@ -586,6 +589,9 @@ export default function WorkspacePage() {
           </div>
         )}
       </main>
+
+      {/* Today's work summary across all projects */}
+      {isWorkSummaryOpen && <WorkSummaryDialog onClose={() => setIsWorkSummaryOpen(false)} />}
 
       {/* New Project Modal */}
       <Modal

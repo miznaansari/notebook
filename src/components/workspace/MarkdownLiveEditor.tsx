@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Annotation, Compartment, EditorState, RangeSetBuilder, Transaction } from "@codemirror/state";
+import { Annotation, Compartment, EditorState, type Range, StateEffect, Transaction } from "@codemirror/state";
 import {
   Decoration,
   type DecorationSet,
@@ -13,6 +13,7 @@ import {
   placeholder as placeholderExtension,
 } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { findNoteLinks, normalizeNoteTitle } from "@/lib/note-links";
 
 // Textarea-like handle, so the notepad's selection / insertion logic works unchanged on CodeMirror
 export interface MarkdownEditorHandle {
@@ -33,6 +34,10 @@ interface MarkdownLiveEditorProps {
   onSelectionChange?: () => void;
   onContextMenu?: (e: MouseEvent) => void;
   onToggleTask?: (lineStart: number) => void;
+  // [[Note Title]] links render as chips only when onOpenLink is given; linkTitles holds the
+  // normalized titles that exist, so missing targets can be shown differently
+  linkTitles?: Set<string>;
+  onOpenLink?: (title: string) => void;
   onScroll?: () => void;
   placeholder?: string;
   readOnly?: boolean;
@@ -49,6 +54,8 @@ const MD_HEADING_PREFIX = /^(#{1,3})\s/;
 
 // Marks transactions that only mirror the `value` prop, so they aren't echoed back through onChange
 const syncFromProps = Annotation.define<boolean>();
+// Asks the live preview to rebuild (link targets changed without a document change)
+const refreshLinks = StateEffect.define<null>();
 
 type ToggleTask = (view: EditorView, dom: HTMLElement) => void;
 
@@ -102,12 +109,56 @@ const bulletWidget = new BulletWidget();
 const hiddenMarks = Decoration.replace({});
 const doneText = Decoration.mark({ class: "cm-md-done" });
 
+interface LinkHooks {
+  enabled: () => boolean;
+  exists: (title: string) => boolean;
+  open: (title: string) => void;
+}
+
+// [[Note Title]] chip; dashed when no note has that title yet
+class NoteLinkWidget extends WidgetType {
+  constructor(
+    readonly title: string,
+    readonly exists: boolean,
+    readonly hooks: LinkHooks
+  ) {
+    super();
+  }
+
+  eq(other: NoteLinkWidget) {
+    return other.title === this.title && other.exists === this.exists;
+  }
+
+  toDOM() {
+    const chip = document.createElement("span");
+    chip.className = this.exists ? "cm-md-link" : "cm-md-link cm-md-link-missing";
+    chip.textContent = this.title;
+    chip.title = this.exists ? `Open "${this.title}"` : `Create note "${this.title}"`;
+    chip.setAttribute("role", "link");
+    chip.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      this.hooks.open(this.title);
+    });
+    return chip;
+  }
+
+  ignoreEvent() {
+    return true;
+  }
+}
+
 // Builds the live-preview decorations for visible lines: headings get real sizes with their
-// "#" marks hidden, task prefixes become checkboxes, bullet prefixes become dots. Replaced
-// prefixes are also returned as atomic ranges so the caret steps over them as one unit.
-function buildDecorations(view: EditorView, onToggle: ToggleTask) {
-  const decorations = new RangeSetBuilder<Decoration>();
-  const atomic = new RangeSetBuilder<Decoration>();
+// "#" marks hidden, task prefixes become checkboxes, bullet prefixes become dots, and
+// [[note links]] become chips. Replaced ranges are also returned as atomic ranges so the
+// caret steps over them as one unit.
+function buildDecorations(view: EditorView, onToggle: ToggleTask, links: LinkHooks) {
+  const decorations: Range<Decoration>[] = [];
+  const atomic: Range<Decoration>[] = [];
+  const replace = (from: number, to: number, decoration: Decoration) => {
+    decorations.push(decoration.range(from, to));
+    atomic.push(decoration.range(from, to));
+  };
+  const linksEnabled = links.enabled();
   let nextLineFrom = 0;
 
   for (const { from, to } of view.visibleRanges) {
@@ -116,42 +167,40 @@ function buildDecorations(view: EditorView, onToggle: ToggleTask) {
       const text = line.text;
       nextLineFrom = line.to + 1;
       pos = line.to + 1;
+      let bodyStart = 0;
 
       const heading = text.match(MD_HEADING_PREFIX);
-      if (heading) {
-        const marksEnd = line.from + heading[0].length;
-        decorations.add(line.from, line.from, Decoration.line({ class: `cm-md-h${heading[1].length}` }));
-        decorations.add(line.from, marksEnd, hiddenMarks);
-        atomic.add(line.from, marksEnd, hiddenMarks);
-        continue;
-      }
+      const task = heading ? null : text.match(MD_TASK_PREFIX);
+      const bullet = heading || task ? null : text.match(MD_BULLET_PREFIX);
 
-      const task = text.match(MD_TASK_PREFIX);
-      if (task) {
+      if (heading) {
+        bodyStart = heading[0].length;
+        decorations.push(Decoration.line({ class: `cm-md-h${heading[1].length}` }).range(line.from));
+        replace(line.from, line.from + bodyStart, hiddenMarks);
+      } else if (task) {
         const checked = task[3] === "x" || task[3] === "X";
         const prefixStart = line.from + task[1].length;
-        const prefixEnd = prefixStart + task[2].length;
-        const checkbox = Decoration.replace({ widget: new CheckboxWidget(checked, onToggle) });
-        decorations.add(prefixStart, prefixEnd, checkbox);
-        atomic.add(prefixStart, prefixEnd, checkbox);
-        if (checked && prefixEnd < line.to) {
-          decorations.add(prefixEnd, line.to, doneText);
+        bodyStart = task[1].length + task[2].length;
+        replace(prefixStart, line.from + bodyStart, Decoration.replace({ widget: new CheckboxWidget(checked, onToggle) }));
+        if (checked && line.from + bodyStart < line.to) {
+          decorations.push(doneText.range(line.from + bodyStart, line.to));
         }
-        continue;
+      } else if (bullet) {
+        bodyStart = bullet[1].length + bullet[2].length + bullet[3].length;
+        replace(line.from + bullet[1].length, line.from + bodyStart, Decoration.replace({ widget: bulletWidget }));
       }
 
-      const bullet = text.match(MD_BULLET_PREFIX);
-      if (bullet) {
-        const prefixStart = line.from + bullet[1].length;
-        const prefixEnd = prefixStart + bullet[2].length + bullet[3].length;
-        const dot = Decoration.replace({ widget: bulletWidget });
-        decorations.add(prefixStart, prefixEnd, dot);
-        atomic.add(prefixStart, prefixEnd, dot);
+      if (linksEnabled) {
+        for (const link of findNoteLinks(text)) {
+          if (link.from < bodyStart) continue;
+          const widget = new NoteLinkWidget(link.title, links.exists(link.title), links);
+          replace(line.from + link.from, line.from + link.to, Decoration.replace({ widget }));
+        }
       }
     }
   }
 
-  return { decorations: decorations.finish(), atomic: atomic.finish() };
+  return { decorations: Decoration.set(decorations, true), atomic: Decoration.set(atomic, true) };
 }
 
 const editableExtensions = (readOnly: boolean) => [
@@ -196,6 +245,25 @@ const editorTheme = EditorView.theme({
     backgroundColor: "#3B82F6",
   },
   ".cm-md-done": { textDecoration: "line-through", color: "#9ca3af" },
+  ".cm-md-link": {
+    display: "inline-block",
+    padding: "0 6px",
+    margin: "0 1px",
+    lineHeight: "1.45",
+    borderRadius: "6px",
+    border: "1px solid #BFDBFE",
+    backgroundColor: "#EFF6FF",
+    color: "#2563EB",
+    fontWeight: "600",
+    textDecoration: "none",
+    cursor: "pointer",
+  },
+  ".cm-md-link:hover": { backgroundColor: "#DBEAFE", borderColor: "#3B82F6" },
+  ".cm-md-link.cm-md-link-missing": {
+    border: "1px dashed #9CA3AF",
+    backgroundColor: "transparent",
+    color: "#6B7280",
+  },
 });
 
 // Free-typing Markdown editor with live preview (CodeMirror 6). The document stays plain
@@ -207,6 +275,8 @@ export function MarkdownLiveEditor({
   onSelectionChange,
   onContextMenu,
   onToggleTask,
+  linkTitles,
+  onOpenLink,
   onScroll,
   placeholder,
   readOnly = false,
@@ -221,16 +291,22 @@ export function MarkdownLiveEditor({
   const withHistoryRef = React.useRef(withHistory);
   const readOnlyRef = React.useRef(readOnly);
   const [editableCompartment] = React.useState(() => new Compartment());
-  const callbacksRef = React.useRef({ onChange, onKeyDown, onSelectionChange, onContextMenu, onToggleTask, onScroll });
+  const callbacksRef = React.useRef({ onChange, onKeyDown, onSelectionChange, onContextMenu, onToggleTask, onScroll, onOpenLink });
+  const linkTitlesRef = React.useRef(linkTitles);
 
   React.useLayoutEffect(() => {
-    callbacksRef.current = { onChange, onKeyDown, onSelectionChange, onContextMenu, onToggleTask, onScroll };
+    callbacksRef.current = { onChange, onKeyDown, onSelectionChange, onContextMenu, onToggleTask, onScroll, onOpenLink };
   });
 
   React.useLayoutEffect(() => {
     const toggleTask: ToggleTask = (view, dom) => {
       const line = view.state.doc.lineAt(view.posAtDOM(dom));
       callbacksRef.current.onToggleTask?.(line.from);
+    };
+    const linkHooks: LinkHooks = {
+      enabled: () => Boolean(callbacksRef.current.onOpenLink),
+      exists: (title) => linkTitlesRef.current?.has(normalizeNoteTitle(title)) ?? false,
+      open: (title) => callbacksRef.current.onOpenLink?.(title),
     };
 
     const livePreview = ViewPlugin.fromClass(
@@ -239,12 +315,13 @@ export function MarkdownLiveEditor({
         atomic: DecorationSet;
 
         constructor(view: EditorView) {
-          ({ decorations: this.decorations, atomic: this.atomic } = buildDecorations(view, toggleTask));
+          ({ decorations: this.decorations, atomic: this.atomic } = buildDecorations(view, toggleTask, linkHooks));
         }
 
         update(update: ViewUpdate) {
-          if (update.docChanged || update.viewportChanged) {
-            ({ decorations: this.decorations, atomic: this.atomic } = buildDecorations(update.view, toggleTask));
+          const linksChanged = update.transactions.some((tr) => tr.effects.some((e) => e.is(refreshLinks)));
+          if (update.docChanged || update.viewportChanged || linksChanged) {
+            ({ decorations: this.decorations, atomic: this.atomic } = buildDecorations(update.view, toggleTask, linkHooks));
           }
         }
       },
@@ -300,6 +377,12 @@ export function MarkdownLiveEditor({
       viewRef.current = null;
     };
   }, [editableCompartment]);
+
+  // Re-render link chips when notes are added, renamed, or deleted
+  React.useLayoutEffect(() => {
+    linkTitlesRef.current = linkTitles;
+    viewRef.current?.dispatch({ effects: refreshLinks.of(null) });
+  }, [linkTitles]);
 
   React.useLayoutEffect(() => {
     viewRef.current?.dispatch({ effects: editableCompartment.reconfigure(editableExtensions(readOnly)) });
