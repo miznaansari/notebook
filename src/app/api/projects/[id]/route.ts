@@ -20,13 +20,8 @@ export async function GET(
         id,
         userId: auth.userId,
       },
+      // Notes aren't included: the client keeps them in its local database (see /api/sync)
       include: {
-        notes: {
-          orderBy: [
-            { isPinned: "desc" },
-            { updatedAt: "desc" },
-          ],
-        },
         questions: {
           where: {
             status: { not: "DELETED" },

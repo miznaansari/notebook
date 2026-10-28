@@ -7,6 +7,7 @@ import { BookOpen, ArrowRight, Sparkles, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
+import { rememberUser } from "@/lib/local-db/db";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -37,6 +38,7 @@ export default function RegisterPage() {
 
       const data = await res.json();
       if (res.ok) {
+        if (data.user) rememberUser(data.user);
         toast.success("Account created successfully with starter project!");
         router.push("/workspace");
         router.refresh();

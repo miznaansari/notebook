@@ -602,14 +602,8 @@ Schedule follow-up sprint demo for next Tuesday 4 PM.`,
       const data = await res.json();
       if (res.ok) {
         toast.success("Summary saved into Notepad notes! 📝");
-        if (data.note && onNotesChange) {
-          fetch(`/api/projects/${projectId}`)
-            .then((r) => r.json())
-            .then((d) => {
-              if (d?.project?.notes) onNotesChange(d.project.notes);
-            })
-            .catch(() => {});
-        }
+        // Notes live in the workspace's local copy; this tells it to pull the new one
+        if (data.note && onNotesChange) onNotesChange([data.note]);
       } else {
         toast.error("Failed to save note.");
       }

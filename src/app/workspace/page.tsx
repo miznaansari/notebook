@@ -15,6 +15,14 @@ import { ExportModule } from "@/components/workspace/ExportModule";
 import { MobileWorkspaceSkeleton } from "@/components/workspace/MobileWorkspaceSkeleton";
 import { WorkSummaryDialog } from "@/components/workspace/WorkSummaryDialog";
 import { getLastProjectId, setLastProjectId } from "@/lib/last-open";
+import { LocalDataProvider, useLocalData, useLocalNotes, useLocalProjects, useSyncState } from "@/lib/local-db/context";
+import {
+  deleteLocalData,
+  parseRememberedUser,
+  readRememberedUserRaw,
+  rememberUser,
+  type SessionUser,
+} from "@/lib/local-db/db";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -33,14 +41,35 @@ const PROJECT_COLORS = [
   "#111827", // Dark Gray
 ];
 
-export default function WorkspacePage() {
-  const router = useRouter();
-  const [user, setUser] = React.useState<{ id: string; name: string; email: string } | null>(null);
-  const [projects, setProjects] = React.useState<ProjectSummary[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = React.useState<string | null>(null);
+// The workspace for a signed-in user. Projects, notes and daily briefs come from the local
+// IndexedDB copy (instant, works offline); the other tabs' data still loads from the server.
+function Workspace({ user }: { user: SessionUser }) {
+  const { db, sync } = useLocalData();
+  const syncState = useSyncState();
+  const localProjects = useLocalProjects();
+  const projects: ProjectSummary[] = React.useMemo(() => localProjects ?? [], [localProjects]);
+
+  // Project list edits made through the API are mirrored into the local copy right away
+  const setProjects = (next: ProjectSummary[] | ((prev: ProjectSummary[]) => ProjectSummary[])) => {
+    const list = typeof next === "function" ? next(projects) : next;
+    db.transaction("rw", db.projects, async () => {
+      await db.projects.clear();
+      await db.projects.bulkPut(list);
+    }).catch((err) => console.error("Failed to update local projects:", err));
+  };
+
+  // The project the user picked, else the one open last time, else the first
+  const [pickedProjectId, setSelectedProjectId] = React.useState<string | null>(null);
+  const selectedProjectId = React.useMemo(() => {
+    if (projects.length === 0) return null;
+    if (pickedProjectId && projects.some((p) => p.id === pickedProjectId)) return pickedProjectId;
+    const lastProjectId = getLastProjectId();
+    return (projects.find((p) => p.id === lastProjectId) ?? projects[0]).id;
+  }, [projects, pickedProjectId]);
+  const notes = useLocalNotes(selectedProjectId);
+
   const [activeProjectData, setActiveProjectData] = React.useState<any | null>(null);
   const [activeTab, setActiveTab] = React.useState<WorkspaceTab>("notes");
-  const [isLoadingUser, setIsLoadingUser] = React.useState(true);
   const [isLoadingProject, setIsLoadingProject] = React.useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(false);
   const [isWorkSummaryOpen, setIsWorkSummaryOpen] = React.useState(false);
@@ -62,36 +91,6 @@ export default function WorkspacePage() {
   // Visited projects, shown instantly on revisit while a fresh copy loads in the background
   const projectCacheRef = React.useRef<Map<string, any>>(new Map());
   const projectFetchRef = React.useRef<AbortController | null>(null);
-
-  // Fetch current user and initial project list (in parallel)
-  React.useEffect(() => {
-    const init = async () => {
-      try {
-        const [meRes, projRes] = await Promise.all([fetch("/api/auth/me"), fetch("/api/projects")]);
-        if (!meRes.ok) {
-          router.push("/login");
-          return;
-        }
-        const meData = await meRes.json();
-        setUser(meData.user);
-
-        if (projRes.ok) {
-          const projData = await projRes.json();
-          setProjects(projData.projects || []);
-          if (projData.projects?.length > 0) {
-            const lastProjectId = getLastProjectId();
-            const lastProject = projData.projects.find((p: ProjectSummary) => p.id === lastProjectId);
-            setSelectedProjectId((lastProject ?? projData.projects[0]).id);
-          }
-        }
-      } catch (err) {
-        toast.error("Failed to initialize session");
-      } finally {
-        setIsLoadingUser(false);
-      }
-    };
-    init();
-  }, [router]);
 
   const applyProjectData = React.useCallback((project: any) => {
     setActiveProjectData(project);
@@ -130,7 +129,7 @@ export default function WorkspacePage() {
         }
       } catch (err) {
         if (controller.signal.aborted) return;
-        toast.error("Failed to load project details");
+        if (navigator.onLine) toast.error("Failed to load project details");
       } finally {
         if (projectFetchRef.current === controller) {
           projectFetchRef.current = null;
@@ -322,6 +321,8 @@ export default function WorkspacePage() {
       if (res.ok) {
         toast.success("Project deleted successfully");
         projectCacheRef.current.delete(selectedProjectId);
+        await db.notes.where("projectId").equals(selectedProjectId).delete();
+        await db.briefs.where("projectId").equals(selectedProjectId).delete();
         const listRes = await fetch("/api/projects");
         if (listRes.ok) {
           const listData = await listRes.json();
@@ -372,23 +373,95 @@ export default function WorkspacePage() {
     }
   };
 
-  if (isLoadingUser) {
-    return (
-      <>
-        <div className="md:hidden h-dvh flex flex-col">
-          <MobileWorkspaceSkeleton />
-        </div>
-        <div className="hidden md:flex min-h-screen items-center justify-center bg-[#F3F4F6]">
-          <div className="flex flex-col items-center gap-3">
-            <div className="w-10 h-10 border-4 border-[#3B82F6] border-t-transparent rounded-full animate-spin" />
-            <p className="text-xs font-bold uppercase tracking-wider text-gray-600">
-              Loading Workspace...
-            </p>
+  const localProject = projects.find((p) => p.id === selectedProjectId) ?? null;
+  const details = activeProjectData?.id === selectedProjectId ? activeProjectData : null;
+  // Local fields first, server details (fresher after edits) on top, local notes always
+  const project = localProject
+    ? {
+        ...localProject,
+        ...(details ?? {}),
+        notes: notes ?? [],
+        questions: details?.questions ?? [],
+        meetings: details?.meetings ?? [],
+        tasks: details?.tasks ?? [],
+        categories: details?.categories ?? [],
+      }
+    : null;
+  const isFirstSync = localProjects === undefined || (projects.length === 0 && !syncState.hasSyncedOnce);
+  const firstSyncFailed = isFirstSync && (syncState.status === "error" || syncState.status === "offline");
+
+  const openEditProject = () => {
+    if (!project) return;
+    setProjectName(project.name);
+    setClientName(project.clientName || "");
+    setProjectDesc(project.description || "");
+    setProjectColor(project.color || "#3B82F6");
+    setProjectIsArchived(project.isArchived || false);
+    setIsEditProjectModalOpen(true);
+  };
+
+  const workspaceSkeleton = (
+    <>
+      {/* Phones: editor-shaped skeleton with a live header (menu button works while loading) */}
+      <MobileWorkspaceSkeleton
+        className="md:hidden"
+        projectName={localProject?.name}
+        projectColor={localProject?.color}
+        onOpenSidebar={() => setIsSidebarOpen(true)}
+      />
+      {/* Skeleton shaped like the workspace so the switch feels instant */}
+      <div
+        className="flex-1 flex flex-col overflow-hidden animate-pulse max-md:hidden"
+        aria-busy="true"
+        aria-label="Loading project workspace"
+      >
+        <div className="px-4 py-3 border-b-2 border-gray-200 space-y-3 shrink-0">
+          <div className="h-5 w-48 max-w-[60%] bg-gray-200 rounded" />
+          <div className="flex gap-2 overflow-hidden">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="h-7 w-20 bg-gray-100 rounded-md shrink-0" />
+            ))}
           </div>
         </div>
-      </>
-    );
-  }
+        <div className="flex-1 flex overflow-hidden">
+          <div className="hidden lg:flex flex-col gap-2 w-72 border-r-2 border-gray-200 bg-[#F3F4F6] p-3">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="h-20 bg-white rounded-lg" />
+            ))}
+          </div>
+          <div className="flex-1 p-4 sm:p-8 space-y-3">
+            <div className="h-7 w-1/3 bg-gray-200 rounded" />
+            <div className="h-4 w-2/3 bg-gray-100 rounded" />
+            <div className="h-4 w-1/2 bg-gray-100 rounded" />
+            <div className="h-4 w-3/5 bg-gray-100 rounded" />
+          </div>
+        </div>
+      </div>
+    </>
+  );
+
+  // Q&A, meetings, tasks and the rest still come from the server
+  const detailsPlaceholder = (
+    <div className="p-6 sm:p-8">
+      {isLoadingProject ? (
+        <div className="space-y-3 animate-pulse" aria-busy="true">
+          <div className="h-7 w-1/3 bg-gray-200 rounded" />
+          <div className="h-4 w-2/3 bg-gray-100 rounded" />
+          <div className="h-4 w-1/2 bg-gray-100 rounded" />
+        </div>
+      ) : (
+        <div className="max-w-sm mx-auto text-center py-10">
+          <p className="text-sm font-bold text-gray-700">This tab needs a connection</p>
+          <p className="text-xs text-gray-500 mt-1">Notes and the Daily Brief work offline; this part loads from the server.</p>
+          {selectedProjectId && (
+            <Button variant="primary" size="sm" className="mt-4" onClick={() => fetchProjectDetails(selectedProjectId)}>
+              Retry
+            </Button>
+          )}
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="h-screen max-md:h-dvh w-screen flex overflow-hidden bg-white">
@@ -408,6 +481,23 @@ export default function WorkspacePage() {
         onOpenWorkSummary={() => setIsWorkSummaryOpen(true)}
         onArchiveProject={(id, status) => handleToggleArchiveProject(id, status)}
         onReorderProjects={handleReorderProjects}
+        syncState={syncState}
+        onSyncNow={() => sync.syncNow()}
+        prepareLogout={async () => {
+          await sync.syncNow();
+          const pending = await sync.pendingChangeCount();
+          return (
+            pending === 0 ||
+            confirm(
+              `${pending} change${pending === 1 ? " hasn't" : "s haven't"} synced yet and will be lost if you log out now. Log out anyway?`
+            )
+          );
+        }}
+        onLoggedOut={async () => {
+          sync.stop();
+          db.close();
+          await deleteLocalData(user.id);
+        }}
         archivingProjectId={archivingProjectId}
         isOpen={isSidebarOpen}
         onCloseMobile={() => setIsSidebarOpen(false)}
@@ -415,155 +505,19 @@ export default function WorkspacePage() {
 
       {/* Right Main Workspace View (Full remaining height & width for children) */}
       <main className="flex-1 flex flex-col h-screen max-md:h-dvh overflow-hidden bg-white">
-        {isLoadingProject ? (
+        {isFirstSync ? (
           <>
-          {/* Phones: editor-shaped skeleton with a live header (menu button works while loading) */}
-          <MobileWorkspaceSkeleton
-            className="md:hidden"
-            projectName={projects.find((p) => p.id === selectedProjectId)?.name}
-            projectColor={projects.find((p) => p.id === selectedProjectId)?.color}
-            onOpenSidebar={() => setIsSidebarOpen(true)}
-          />
-          {/* Skeleton shaped like the workspace so the switch feels instant */}
-          <div
-            className="flex-1 flex flex-col overflow-hidden animate-pulse max-md:hidden"
-            aria-busy="true"
-            aria-label="Loading project workspace"
-          >
-            <div className="px-4 py-3 border-b-2 border-gray-200 space-y-3 shrink-0">
-              <div className="h-5 w-48 max-w-[60%] bg-gray-200 rounded" />
-              <div className="flex gap-2 overflow-hidden">
-                {Array.from({ length: 6 }).map((_, i) => (
-                  <div key={i} className="h-7 w-20 bg-gray-100 rounded-md shrink-0" />
-                ))}
+            {firstSyncFailed && (
+              <div className="px-4 py-2 bg-amber-50 border-b border-amber-100 text-xs font-semibold text-amber-900 flex items-center justify-between gap-2 shrink-0">
+                <span>Couldn&apos;t download your notes. Check your connection.</span>
+                <button type="button" onClick={() => sync.syncNow()} className="font-bold underline cursor-pointer">
+                  Retry
+                </button>
               </div>
-            </div>
-            <div className="flex-1 flex overflow-hidden">
-              <div className="hidden lg:flex flex-col gap-2 w-72 border-r-2 border-gray-200 bg-[#F3F4F6] p-3">
-                {Array.from({ length: 5 }).map((_, i) => (
-                  <div key={i} className="h-20 bg-white rounded-lg" />
-                ))}
-              </div>
-              <div className="flex-1 p-4 sm:p-8 space-y-3">
-                <div className="h-7 w-1/3 bg-gray-200 rounded" />
-                <div className="h-4 w-2/3 bg-gray-100 rounded" />
-                <div className="h-4 w-1/2 bg-gray-100 rounded" />
-                <div className="h-4 w-3/5 bg-gray-100 rounded" />
-              </div>
-            </div>
-          </div>
+            )}
+            {workspaceSkeleton}
           </>
-        ) : activeProjectData ? (
-          <>
-            {/* Ultra-Compact Active Project Header & Tabs */}
-            <WorkspaceHeader
-              project={activeProjectData}
-              activeTab={activeTab}
-              onTabChange={setActiveTab}
-              onEditProject={() => setIsEditProjectModalOpen(true)}
-              onArchiveProject={() => handleToggleArchiveProject()}
-              isArchiving={archivingProjectId === activeProjectData.id}
-              onDeleteProject={handleDeleteProject}
-              onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
-            />
-
-            {/* Children Workspace Modules (Takes 100% of remaining screen). Keyed by project so
-                switching to a cached project still remounts modules with fresh local state. */}
-            <div key={activeProjectData.id} className="flex-1 overflow-y-auto bg-white">
-              {activeTab === "notes" && (
-                <NotepadModule
-                  projectId={activeProjectData.id}
-                  notes={activeProjectData.notes || []}
-                  tasks={activeProjectData.tasks || []}
-                  onNotesChange={(newNotes) => {
-                    updateProjectData(activeProjectData.id, { notes: newNotes });
-                  }}
-                  onTasksChange={(newTasks) => {
-                    updateProjectData(activeProjectData.id, { tasks: newTasks });
-                  }}
-                  onNavigateToTab={(tab) => setActiveTab(tab)}
-                />
-              )}
-
-              {activeTab === "questions" && (
-                <QuestionsModule
-                  projectId={activeProjectData.id}
-                  questions={activeProjectData.questions || []}
-                  categories={activeProjectData.categories || []}
-                  onQuestionsChange={(newQuestions) => {
-                    updateProjectData(activeProjectData.id, { questions: newQuestions });
-                  }}
-                  onCategoriesChange={(newCategories) => {
-                    updateProjectData(activeProjectData.id, { categories: newCategories });
-                  }}
-                />
-              )}
-
-              {activeTab === "meeting-prep" && (
-                <MeetingPrepModule
-                  projectId={activeProjectData.id}
-                  projectName={activeProjectData.name}
-                  clientName={activeProjectData.clientName}
-                  questions={activeProjectData.questions || []}
-                  categories={activeProjectData.categories || []}
-                  onQuestionsChange={(newQuestions) => {
-                    updateProjectData(activeProjectData.id, { questions: newQuestions });
-                  }}
-                  onCategoriesChange={(newCategories) => {
-                    updateProjectData(activeProjectData.id, { categories: newCategories });
-                  }}
-                  onNavigateToMeetings={() => setActiveTab("meetings")}
-                  onScheduleMeetingWithQuestions={handleScheduleFromPrep}
-                />
-              )}
-
-              {activeTab === "meetings" && (
-                <MeetingsModule
-                  projectId={activeProjectData.id}
-                  projectName={activeProjectData.name}
-                  clientName={activeProjectData.clientName}
-                  tasks={activeProjectData.tasks || []}
-                  meetings={activeProjectData.meetings || []}
-                  questions={activeProjectData.questions || []}
-                  preSelectedQuestionIds={preSelectedMeetingQuestions}
-                  onTasksChange={(newTasks) => {
-                    updateProjectData(activeProjectData.id, { tasks: newTasks });
-                  }}
-                  onMeetingsChange={(newMeetings) => {
-                    updateProjectData(activeProjectData.id, { meetings: newMeetings });
-                    setPreSelectedMeetingQuestions([]);
-                  }}
-                  onNotesChange={(newNotes) => {
-                    updateProjectData(activeProjectData.id, { notes: newNotes });
-                  }}
-                  onNavigateToTab={(tab) => setActiveTab(tab)}
-                />
-              )}
-
-              {activeTab === "tasks" && (
-                <TasksModule
-                  projectId={activeProjectData.id}
-                  tasks={activeProjectData.tasks || []}
-                  meetings={activeProjectData.meetings || []}
-                  onTasksChange={(newTasks) => {
-                    updateProjectData(activeProjectData.id, { tasks: newTasks });
-                  }}
-                />
-              )}
-
-              {activeTab === "templates" && (
-                <TemplatesModule
-                  projectId={activeProjectData.id}
-                  onQuestionsImported={() => fetchProjectDetails(activeProjectData.id)}
-                />
-              )}
-
-              {activeTab === "export" && (
-                <ExportModule project={activeProjectData} />
-              )}
-            </div>
-          </>
-        ) : (
+        ) : projects.length === 0 ? (
           /* Empty State when no projects exist */
           <div className="flex-1 flex items-center justify-center p-8 text-center">
             <div className="max-w-md">
@@ -587,6 +541,124 @@ export default function WorkspacePage() {
               </Button>
             </div>
           </div>
+        ) : !project || notes === undefined ? (
+          workspaceSkeleton
+        ) : (
+          <>
+            {/* Ultra-Compact Active Project Header & Tabs */}
+            <WorkspaceHeader
+              project={project}
+              activeTab={activeTab}
+              onTabChange={setActiveTab}
+              onEditProject={openEditProject}
+              onArchiveProject={() => handleToggleArchiveProject()}
+              isArchiving={archivingProjectId === project.id}
+              onDeleteProject={handleDeleteProject}
+              onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
+            />
+
+            {/* Children Workspace Modules (Takes 100% of remaining screen). Keyed by project so
+                switching projects remounts modules with fresh local state. */}
+            <div key={project.id} className="flex-1 overflow-y-auto bg-white">
+              {activeTab === "notes" && (
+                <NotepadModule
+                  projectId={project.id}
+                  notes={notes}
+                  tasks={project.tasks}
+                  onTasksChange={(newTasks) => {
+                    updateProjectData(project.id, { tasks: newTasks });
+                  }}
+                  onNavigateToTab={(tab) => setActiveTab(tab)}
+                />
+              )}
+
+              {activeTab === "questions" &&
+                (details ? (
+                  <QuestionsModule
+                    projectId={project.id}
+                    questions={project.questions}
+                    categories={project.categories}
+                    onQuestionsChange={(newQuestions) => {
+                      updateProjectData(project.id, { questions: newQuestions });
+                    }}
+                    onCategoriesChange={(newCategories) => {
+                      updateProjectData(project.id, { categories: newCategories });
+                    }}
+                  />
+                ) : (
+                  detailsPlaceholder
+                ))}
+
+              {activeTab === "meeting-prep" &&
+                (details ? (
+                  <MeetingPrepModule
+                    projectId={project.id}
+                    projectName={project.name}
+                    clientName={project.clientName}
+                    questions={project.questions}
+                    categories={project.categories}
+                    onQuestionsChange={(newQuestions) => {
+                      updateProjectData(project.id, { questions: newQuestions });
+                    }}
+                    onCategoriesChange={(newCategories) => {
+                      updateProjectData(project.id, { categories: newCategories });
+                    }}
+                    onNavigateToMeetings={() => setActiveTab("meetings")}
+                    onScheduleMeetingWithQuestions={handleScheduleFromPrep}
+                  />
+                ) : (
+                  detailsPlaceholder
+                ))}
+
+              {activeTab === "meetings" &&
+                (details ? (
+                  <MeetingsModule
+                    projectId={project.id}
+                    projectName={project.name}
+                    clientName={project.clientName}
+                    tasks={project.tasks}
+                    meetings={project.meetings}
+                    questions={project.questions}
+                    preSelectedQuestionIds={preSelectedMeetingQuestions}
+                    onTasksChange={(newTasks) => {
+                      updateProjectData(project.id, { tasks: newTasks });
+                    }}
+                    onMeetingsChange={(newMeetings) => {
+                      updateProjectData(project.id, { meetings: newMeetings });
+                      setPreSelectedMeetingQuestions([]);
+                    }}
+                    // It saves summaries as notes through the API; pull them into the local copy
+                    onNotesChange={() => sync.syncNow()}
+                    onNavigateToTab={(tab) => setActiveTab(tab)}
+                  />
+                ) : (
+                  detailsPlaceholder
+                ))}
+
+              {activeTab === "tasks" &&
+                (details ? (
+                  <TasksModule
+                    projectId={project.id}
+                    tasks={project.tasks}
+                    meetings={project.meetings}
+                    onTasksChange={(newTasks) => {
+                      updateProjectData(project.id, { tasks: newTasks });
+                    }}
+                  />
+                ) : (
+                  detailsPlaceholder
+                ))}
+
+              {activeTab === "templates" && (
+                <TemplatesModule
+                  projectId={project.id}
+                  onQuestionsImported={() => fetchProjectDetails(project.id)}
+                />
+              )}
+
+              {activeTab === "export" && (details ? <ExportModule project={project} /> : detailsPlaceholder)}
+            </div>
+          </>
         )}
       </main>
 
@@ -755,5 +827,80 @@ export default function WorkspacePage() {
         </form>
       </Modal>
     </div>
+  );
+}
+
+const subscribeToNothing = () => () => {};
+
+// Opens the signed-in user's local data. The user remembered on this device is used right away
+// (instant open, works offline); /api/auth/me confirms the session in the background.
+export default function WorkspacePage() {
+  const router = useRouter();
+  const rememberedRaw = React.useSyncExternalStore(subscribeToNothing, readRememberedUserRaw, () => null);
+  const remembered = React.useMemo(() => parseRememberedUser(rememberedRaw), [rememberedRaw]);
+  const [verifiedUser, setVerifiedUser] = React.useState<SessionUser | null>(null);
+  const [authUnreachable, setAuthUnreachable] = React.useState(false);
+  const [authAttempt, setAuthAttempt] = React.useState(0);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    fetch("/api/auth/me")
+      .then(async (res) => {
+        if (cancelled) return;
+        if (!res.ok) {
+          router.push("/login");
+          return;
+        }
+        const data = await res.json();
+        rememberUser(data.user);
+        setVerifiedUser(data.user);
+      })
+      .catch(() => {
+        if (!cancelled) setAuthUnreachable(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [router, authAttempt]);
+
+  const user = verifiedUser ?? remembered;
+
+  if (!user) {
+    return (
+      <>
+        <div className="md:hidden h-dvh flex flex-col">
+          <MobileWorkspaceSkeleton />
+        </div>
+        <div className="hidden md:flex min-h-screen items-center justify-center bg-[#F3F4F6]">
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-10 h-10 border-4 border-[#3B82F6] border-t-transparent rounded-full animate-spin" />
+            <p className="text-xs font-bold uppercase tracking-wider text-gray-600">
+              Loading Workspace...
+            </p>
+          </div>
+        </div>
+        {authUnreachable && (
+          <div className="fixed bottom-4 inset-x-4 md:inset-x-auto md:right-4 md:w-80 z-50 p-3 rounded-xl bg-white border-2 border-gray-200 shadow-xl text-xs font-semibold text-gray-700 flex items-center justify-between gap-2">
+            <span>Can&apos;t reach the server. Check your connection.</span>
+            <button
+              type="button"
+              onClick={() => {
+                setAuthUnreachable(false);
+                setAuthAttempt((n) => n + 1);
+              }}
+              className="font-bold text-[#3B82F6] cursor-pointer"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+      </>
+    );
+  }
+
+  return (
+    <LocalDataProvider key={user.id} userId={user.id}>
+      <Workspace user={user} />
+    </LocalDataProvider>
   );
 }

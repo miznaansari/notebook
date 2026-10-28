@@ -25,12 +25,15 @@ import {
   X,
   Loader2,
   ClipboardList,
+  RefreshCw,
+  CloudOff,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import type { SyncState } from "@/lib/local-db/sync";
 
 export interface ProjectSummary {
   id: string;
@@ -57,6 +60,12 @@ interface SidebarProps {
   onSelectProject: (id: string) => void;
   onNewProject: () => void;
   onOpenWorkSummary?: () => void;
+  syncState?: SyncState;
+  onSyncNow?: () => void;
+  // Return false to cancel logout (e.g. the user keeps unsynced changes)
+  prepareLogout?: () => Promise<boolean>;
+  // After the server session ends: clear this device's copy
+  onLoggedOut?: () => Promise<void>;
   onArchiveProject?: (id: string, newStatus?: boolean) => void;
   onReorderProjects?: (updatedProjects: ProjectSummary[]) => void;
   archivingProjectId?: string | null;
@@ -71,6 +80,10 @@ export function Sidebar({
   onSelectProject,
   onNewProject,
   onOpenWorkSummary,
+  syncState,
+  onSyncNow,
+  prepareLogout,
+  onLoggedOut,
   onArchiveProject,
   onReorderProjects,
   archivingProjectId,
@@ -89,7 +102,9 @@ export function Sidebar({
   const handleLogout = async () => {
     setIsLoggingOut(true);
     try {
+      if (prepareLogout && !(await prepareLogout())) return;
       await fetch("/api/auth/logout", { method: "POST" });
+      await onLoggedOut?.();
       toast.success("Logged out successfully");
       router.push("/login");
       router.refresh();
@@ -440,6 +455,8 @@ export function Sidebar({
             )}
           </button>
 
+          {syncState && <SyncIndicator state={syncState} onSyncNow={onSyncNow} />}
+
           {/* User & Logout Bar */}
           {user && (
             <div className="pt-2 border-t border-gray-100 flex items-center justify-between gap-2">
@@ -470,5 +487,52 @@ export function Sidebar({
         </div>
       </aside>
     </>
+  );
+}
+
+function formatSyncedAgo(iso: string | null): string {
+  if (!iso) return "not yet";
+  const seconds = Math.round((Date.now() - Date.parse(iso)) / 1000);
+  if (seconds < 45) return "just now";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+
+// Notes live on this device and sync in the background; this line says how current they are
+function SyncIndicator({ state, onSyncNow }: { state: SyncState; onSyncNow?: () => void }) {
+  const label =
+    state.status === "syncing"
+      ? "Syncing…"
+      : state.status === "offline"
+        ? "Offline · changes saved on this device"
+        : state.status === "error"
+          ? "Sync failed · will retry"
+          : `Synced ${formatSyncedAgo(state.lastSyncedAt)}`;
+
+  return (
+    <button
+      type="button"
+      onClick={onSyncNow}
+      disabled={state.status === "syncing"}
+      title="Sync now"
+      className="w-full flex items-center gap-1.5 px-2.5 py-1 rounded-md hover:bg-gray-100 text-[11px] font-semibold text-gray-500 transition cursor-pointer disabled:cursor-default"
+    >
+      {state.status === "offline" ? (
+        <CloudOff className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+      ) : (
+        <RefreshCw
+          className={cn(
+            "w-3.5 h-3.5 shrink-0",
+            state.status === "syncing" && "animate-spin text-[#3B82F6]",
+            state.status === "error" && "text-red-500",
+            state.status === "idle" && "text-emerald-500"
+          )}
+        />
+      )}
+      <span className="truncate">{label}</span>
+    </button>
   );
 }

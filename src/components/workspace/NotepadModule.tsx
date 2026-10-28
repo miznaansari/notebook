@@ -70,6 +70,7 @@ import { DailyBriefPanel, useTodayKey } from "./DailyBriefPanel";
 import { formatBriefDate, type DailyBriefSummary } from "@/lib/daily-brief";
 import { extractNoteLinkTitles, isDefaultNoteTitle, normalizeNoteTitle, relinkNoteTitle } from "@/lib/note-links";
 import { NoteLinkPicker, type PickerAnchor } from "./NoteLinkPicker";
+import { useBriefIndex, useLocalData } from "@/lib/local-db/context";
 import { VoiceMicButton } from "@/components/ui/voice-mic-button";
 import { cn, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
@@ -89,7 +90,6 @@ interface NotepadModuleProps {
   projectId: string;
   notes: NoteItem[];
   tasks?: any[];
-  onNotesChange: (updatedNotes: NoteItem[]) => void;
   onTasksChange?: (updatedTasks: any[]) => void;
   onNavigateToTab?: (tab: any) => void;
 }
@@ -189,6 +189,25 @@ function interactivePrefixLength(line: string): number | null {
   return 0;
 }
 
+interface NoteFields {
+  title: string;
+  content: string;
+  description: string | null;
+  tags: string | null;
+  isPinned: boolean;
+}
+
+const noteFields = (n: { title: string; content: string; description?: string | null; tags?: string | null; isPinned: boolean }): NoteFields => ({
+  title: n.title.trim() || "Untitled Note",
+  content: n.content,
+  description: n.description?.trim() || null,
+  tags: n.tags?.trim() || null,
+  isPinned: n.isPinned,
+});
+
+const sameNoteFields = (a: NoteFields, b: NoteFields) =>
+  a.title === b.title && a.content === b.content && a.description === b.description && a.tags === b.tags && a.isPinned === b.isPinned;
+
 // Stored as the "last open note" when the Daily Brief was open
 const DAILY_BRIEF_ID = "__daily_brief__";
 
@@ -197,7 +216,6 @@ export function NotepadModule({
   projectId,
   notes,
   tasks = [],
-  onNotesChange,
   onTasksChange,
   onNavigateToTab,
 }: NotepadModuleProps) {
@@ -235,34 +253,18 @@ export function NotepadModule({
     isDailyBriefOpen || notes.length > 0 ? "editor" : "list"
   );
 
+  // Notes and daily briefs are read from and written to the local database (synced in the background)
+  const { store } = useLocalData();
+
   // Daily Brief: index of days with a brief (null while loading), shared by the list card and the panel
   const todayKey = useTodayKey();
-  const [briefIndex, setBriefIndex] = React.useState<DailyBriefSummary[] | null>(null);
-  React.useEffect(() => {
-    const controller = new AbortController();
-    fetch(`/api/projects/${projectId}/daily-briefs`, { signal: controller.signal })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data) setBriefIndex(data.briefs);
-      })
-      .catch((err) => {
-        if (!controller.signal.aborted) console.error("Failed to load daily briefs:", err);
-      });
-    return () => controller.abort();
-  }, [projectId]);
+  const briefIndex: DailyBriefSummary[] | null = useBriefIndex(projectId) ?? null;
 
   // Normalized titles that a [[link]] can resolve to
   const linkTitles = React.useMemo(
     () => new Set(notes.filter((n) => !isDefaultNoteTitle(n.title)).map((n) => normalizeNoteTitle(n.title))),
     [notes]
   );
-
-  const handleBriefSummaryChange = React.useCallback((date: string, summary: DailyBriefSummary | null) => {
-    setBriefIndex((prev) => {
-      const rest = (prev ?? []).filter((b) => b.date !== date);
-      return summary ? [...rest, summary].sort((a, b) => b.date.localeCompare(a.date)) : rest;
-    });
-  }, []);
 
   const handleOpenDailyBrief = () => {
     setIsDailyBriefOpen(true);
@@ -280,11 +282,19 @@ export function NotepadModule({
 
   // Latest props for async callbacks and the unmount flush, which would otherwise see stale closures
   const notesRef = React.useRef(notes);
-  const onNotesChangeRef = React.useRef(onNotesChange);
   React.useEffect(() => {
     notesRef.current = notes;
-    onNotesChangeRef.current = onNotesChange;
   });
+
+  // The open note as last loaded into or saved from this editor. A database copy that differs
+  // from it came from elsewhere (another device, a link rewrite) and is shown if the editor has
+  // no unsaved changes. Copies older than this editor's last write are stale reads and ignored.
+  const persistedNoteRef = React.useRef<NoteFields | null>(null);
+  const lastLocalWriteAtRef = React.useRef("");
+  const markOpenNoteWritten = (fields: Partial<NoteFields>) => {
+    if (persistedNoteRef.current) persistedNoteRef.current = { ...persistedNoteRef.current, ...fields };
+    lastLocalWriteAtRef.current = new Date().toISOString();
+  };
 
   // Undo / Redo history stack tracking
   const [history, setHistory] = React.useState<string[]>([]);
@@ -449,23 +459,29 @@ export function NotepadModule({
             latestTitleRef.current = generatedTitle;
           }
         }
-        onNotesChange(notesRef.current.map((n) => (n.id === noteId ? { ...n, ...patch } : n)));
-        const saveRes = await fetch(`/api/projects/${projectId}/notes/${noteId}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(patch),
-        });
-        const relinked: { id: string; content: string }[] = saveRes.ok ? (await saveRes.json()).relinkedNotes ?? [] : [];
-        if (relinked.length > 0 && generatedTitle) {
-          const byId = new Map(relinked.map((n) => [n.id, n.content]));
-          const openId = latestActiveIdRef.current;
-          if (openId && byId.has(openId)) {
-            const relinkedLive = relinkNoteTitle(latestContentRef.current, title, generatedTitle);
-            setCurrentContent(relinkedLive);
-            latestContentRef.current = relinkedLive;
-            byId.set(openId, relinkedLive);
-          }
-          onNotesChange(notesRef.current.map((n) => (byId.has(n.id) ? { ...n, content: byId.get(n.id)! } : n)));
+        const relinkedIds = await store.updateNote(noteId, patch);
+        if (latestActiveIdRef.current === noteId) markOpenNoteWritten(patch);
+
+        // The open note links to the renamed one: with unsaved edits, relink the editor text too
+        // (otherwise the next save would undo it); without, the editor picks up the database copy
+        const openId = latestActiveIdRef.current;
+        const persisted = persistedNoteRef.current;
+        const hasUnsavedEdits =
+          persisted !== null &&
+          !sameNoteFields(
+            noteFields({
+              title: latestTitleRef.current,
+              content: latestContentRef.current,
+              description: latestDescriptionRef.current,
+              tags: latestTagsRef.current,
+              isPinned: latestPinnedRef.current,
+            }),
+            persisted
+          );
+        if (generatedTitle && openId && relinkedIds.includes(openId) && hasUnsavedEdits) {
+          const relinkedLive = relinkNoteTitle(latestContentRef.current, title, generatedTitle);
+          setCurrentContent(relinkedLive);
+          latestContentRef.current = relinkedLive;
         }
         return generatedTitle || null;
       } catch (err) {
@@ -475,7 +491,7 @@ export function NotepadModule({
         isGeneratingDescRef.current = false;
       }
     },
-    [projectId, onNotesChange]
+    [store]
   );
 
   // Check word count tier and handle reset on erase or trigger on word thresholds
@@ -492,9 +508,8 @@ export function NotepadModule({
           noteDescTiersRef.current[noteId] = 0;
           latestDescriptionRef.current = null;
           setCurrentDescription(null);
-          onNotesChange(
-            notes.map((n) => (n.id === noteId ? { ...n, description: null } : n))
-          );
+          store.updateNote(noteId, { description: null }).catch((err) => console.error(err));
+          if (latestActiveIdRef.current === noteId) markOpenNoteWritten({ description: null });
         }
         if (descAiTimeoutRef.current) {
           clearTimeout(descAiTimeoutRef.current);
@@ -518,10 +533,10 @@ export function NotepadModule({
         }, 1000);
       }
     },
-    [notes, onNotesChange, triggerAiNoteMetaGeneration]
+    [store, triggerAiNoteMetaGeneration]
   );
 
-  // Flush pending save immediately to server
+  // Save to the local database (instant, works offline); the sync engine pushes it to the server
   const saveNoteToServer = React.useCallback(
     async (
       noteId: string,
@@ -532,43 +547,26 @@ export function NotepadModule({
       description?: string | null
     ) => {
       if (!noteId) return;
-      setSaveStatus("saving");
+      const fields = noteFields({
+        title,
+        content,
+        description: description !== undefined ? description : latestDescriptionRef.current,
+        tags,
+        isPinned: pinned,
+      });
       try {
-        const res = await fetch(`/api/projects/${projectId}/notes/${noteId}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title: title.trim() || "Untitled Note",
-            content,
-            description: description !== undefined ? description : latestDescriptionRef.current,
-            tags,
-            isPinned: pinned,
-          }),
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          setSaveStatus("saved");
-          const relinked = new Map<string, string>(
-            (data.relinkedNotes ?? []).map((n: { id: string; content: string }) => [n.id, n.content])
-          );
-          onNotesChange(
-            notes.map((n) =>
-              n.id === noteId
-                ? { ...n, ...data.note }
-                : relinked.has(n.id)
-                  ? { ...n, content: relinked.get(n.id)! }
-                  : n
-            )
-          );
-        } else {
-          setSaveStatus("unsaved");
-        }
+        await store.updateNote(noteId, fields);
+        if (noteId !== latestActiveIdRef.current) return;
+        persistedNoteRef.current = fields;
+        lastLocalWriteAtRef.current = new Date().toISOString();
+        // Typing during the write keeps the note "unsaved"; its own save is already queued
+        if (latestContentRef.current === content && latestTitleRef.current === title) setSaveStatus("saved");
       } catch (err) {
+        console.error("Failed to save note on this device:", err);
         setSaveStatus("unsaved");
       }
     },
-    [projectId, notes, onNotesChange]
+    [store]
   );
 
   // Debounced auto-save handler
@@ -658,8 +656,52 @@ export function NotepadModule({
       return;
     }
 
+    const openNote = notes.find((n) => n.id === activeNoteId);
+
+    // The open note was deleted on another device
+    if (!openNote && activeNoteId === lastLoadedNoteIdRef.current) {
+      lastLoadedNoteIdRef.current = null;
+      setActiveNoteId(notes[0]?.id ?? null);
+      toast.info("That note was deleted on another device");
+      return;
+    }
+
+    // Same note, newer copy in the database (synced from another device, or links rewritten)
+    if (openNote && activeNoteId === lastLoadedNoteIdRef.current) {
+      const persisted = persistedNoteRef.current;
+      const incoming = noteFields(openNote);
+      const editor = noteFields({
+        title: latestTitleRef.current,
+        content: latestContentRef.current,
+        description: latestDescriptionRef.current,
+        tags: latestTagsRef.current,
+        isPinned: latestPinnedRef.current,
+      });
+      if (
+        persisted &&
+        !sameNoteFields(incoming, persisted) &&
+        sameNoteFields(editor, persisted) &&
+        openNote.updatedAt > lastLocalWriteAtRef.current
+      ) {
+        setCurrentTitle(openNote.title);
+        setCurrentContent(openNote.content);
+        setCurrentDescription(openNote.description || null);
+        setCurrentTags(openNote.tags || "");
+        setIsPinned(openNote.isPinned);
+        latestTitleRef.current = openNote.title;
+        latestContentRef.current = openNote.content;
+        latestDescriptionRef.current = openNote.description || null;
+        latestTagsRef.current = openNote.tags || "";
+        latestPinnedRef.current = openNote.isPinned;
+        persistedNoteRef.current = incoming;
+        lastLocalWriteAtRef.current = openNote.updatedAt;
+        pushHistorySnapshot(openNote.content);
+      }
+      return;
+    }
+
     if (activeNoteId !== lastLoadedNoteIdRef.current) {
-      const targetNote = notes.find((n) => n.id === activeNoteId);
+      const targetNote = openNote;
       if (targetNote) {
         setCurrentTitle(targetNote.title);
         setCurrentContent(targetNote.content);
@@ -675,6 +717,8 @@ export function NotepadModule({
         latestPinnedRef.current = targetNote.isPinned;
         latestActiveIdRef.current = targetNote.id;
         lastLoadedNoteIdRef.current = targetNote.id;
+        persistedNoteRef.current = noteFields(targetNote);
+        lastLocalWriteAtRef.current = targetNote.updatedAt;
 
         // Initialize tier tracking for note
         if (noteDescTiersRef.current[targetNote.id] === undefined) {
@@ -700,7 +744,7 @@ export function NotepadModule({
         setBubbleToolbar(null);
       }
     }
-  }, [activeNoteId, notes]);
+  }, [activeNoteId, notes, pushHistorySnapshot]);
 
   // Focus next line automatically when Enter or Backspace is pressed in Interactive Mode
   React.useEffect(() => {
@@ -734,33 +778,22 @@ export function NotepadModule({
       if (descAiTimeoutRef.current) clearTimeout(descAiTimeoutRef.current);
 
       const noteId = latestActiveIdRef.current;
-      const saved = notesRef.current.find((n) => n.id === noteId);
-      if (!noteId || !saved) return;
-
-      const local = {
-        title: latestTitleRef.current.trim() || "Untitled Note",
-        content: latestContentRef.current,
-        description: latestDescriptionRef.current,
-        tags: latestTagsRef.current,
-        isPinned: latestPinnedRef.current,
-      };
-      const isDirty =
-        local.title !== saved.title ||
-        local.content !== saved.content ||
-        local.tags !== (saved.tags || "") ||
-        local.isPinned !== saved.isPinned ||
-        local.description !== (saved.description || null);
-      if (!isDirty) return;
-
-      onNotesChangeRef.current(notesRef.current.map((n) => (n.id === noteId ? { ...n, ...local } : n)));
-      fetch(`/api/projects/${projectId}/notes/${noteId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(local),
-        keepalive: true,
-      }).catch((err) => console.error("Failed to flush note on unmount:", err));
+      if (!noteId) return;
+      // A no-op when nothing changed (updateNote compares fields)
+      store
+        .updateNote(
+          noteId,
+          noteFields({
+            title: latestTitleRef.current,
+            content: latestContentRef.current,
+            description: latestDescriptionRef.current,
+            tags: latestTagsRef.current,
+            isPinned: latestPinnedRef.current,
+          })
+        )
+        .catch((err) => console.error("Failed to save note on unmount:", err));
     };
-  }, [projectId]);
+  }, [store]);
 
   // Global Keyboard Shortcuts (Ctrl+S, Ctrl+Z, Ctrl+Y, Ctrl+C, Ctrl+X, Backspace, Escape)
   React.useEffect(() => {
@@ -2464,27 +2497,12 @@ export function NotepadModule({
     if (isCreatingNote) return;
     setIsCreatingNote(true);
     try {
-      const res = await fetch(`/api/projects/${projectId}/notes`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: "New Note",
-          content: "# New Note",
-          tags: "General",
-        }),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        onNotesChange([data.note, ...notes]);
-        lastLoadedNoteIdRef.current = null;
-        setActiveNoteId(data.note.id);
-        setIsDailyBriefOpen(false);
-        setMobileView("editor");
-        toast.success("New note created!");
-      } else {
-        toast.error("Failed to create note");
-      }
+      const note = await store.createNote(projectId, { title: "New Note", content: "# New Note", tags: "General" });
+      lastLoadedNoteIdRef.current = null;
+      setActiveNoteId(note.id);
+      setIsDailyBriefOpen(false);
+      setMobileView("editor");
+      toast.success("New note created!");
     } catch (err) {
       toast.error("Failed to create note");
     } finally {
@@ -2516,14 +2534,11 @@ export function NotepadModule({
           latestDescriptionRef.current
         );
       }
-      const res = await fetch(`/api/projects/${projectId}/notes`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: title.trim(), content: `# ${title.trim()}\n`, tags: "General" }),
+      const created = await store.createNote(projectId, {
+        title: title.trim(),
+        content: `# ${title.trim()}\n`,
+        tags: "General",
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const created: NoteItem = (await res.json()).note;
-      onNotesChange([created, ...notesRef.current]);
       if (fromId) setLinkBackStack((prev) => [...prev, fromId].slice(-20));
       lastLoadedNoteIdRef.current = null;
       setActiveNoteId(created.id);
@@ -2622,22 +2637,16 @@ export function NotepadModule({
     if (!confirm("Are you sure you want to delete this note?")) return;
 
     try {
-      const res = await fetch(`/api/projects/${projectId}/notes/${id}`, {
-        method: "DELETE",
-      });
-
-      if (res.ok) {
-        const updated = notes.filter((n) => n.id !== id);
-        onNotesChange(updated);
-        if (activeNoteId === id) {
-          lastLoadedNoteIdRef.current = null;
-          setActiveNoteId(updated.length > 0 ? updated[0].id : null);
-          if (updated.length === 0) {
-            setMobileView("list");
-          }
+      const updated = notes.filter((n) => n.id !== id);
+      if (activeNoteId === id) {
+        lastLoadedNoteIdRef.current = null;
+        setActiveNoteId(updated.length > 0 ? updated[0].id : null);
+        if (updated.length === 0) {
+          setMobileView("list");
         }
-        toast.success("Note deleted");
       }
+      await store.deleteNote(id);
+      toast.success("Note deleted");
     } catch (err) {
       toast.error("Failed to delete note");
     }
@@ -3553,7 +3562,6 @@ export function NotepadModule({
           projectId={projectId}
           todayKey={todayKey}
           briefs={briefIndex}
-          onSummaryChange={handleBriefSummaryChange}
           linkTitles={linkTitles}
           linkNotes={notes}
           onOpenLink={openNoteLink}

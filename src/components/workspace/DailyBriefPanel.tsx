@@ -10,7 +10,6 @@ import {
   ListTodo,
   Lock,
   PenLine,
-  RotateCcw,
   Save,
   AlertCircle,
   LayoutTemplate,
@@ -18,6 +17,7 @@ import {
 import { cn } from "@/lib/utils";
 import { MarkdownLiveEditor, MD_TASK_PREFIX, type MarkdownEditorHandle } from "./MarkdownLiveEditor";
 import { NoteLinkPicker, type LinkableNote, type PickerAnchor } from "./NoteLinkPicker";
+import { useLocalBrief, useLocalData } from "@/lib/local-db/context";
 import {
   DAILY_BRIEF_TEMPLATE,
   addDays,
@@ -74,7 +74,6 @@ interface DailyBriefPanelProps {
   todayKey: string;
   // Days that have a brief, newest first; null while the index is loading
   briefs: DailyBriefSummary[] | null;
-  onSummaryChange: (date: string, summary: DailyBriefSummary | null) => void;
   // [[Note Title]] references to the project's notes
   linkTitles?: Set<string>;
   linkNotes?: LinkableNote[];
@@ -92,7 +91,6 @@ export function DailyBriefPanel({
   projectId,
   todayKey,
   briefs,
-  onSummaryChange,
   linkTitles,
   linkNotes = [],
   onOpenLink,
@@ -104,14 +102,12 @@ export function DailyBriefPanel({
   const viewDate = pinnedDate ?? todayKey;
   const isToday = viewDate === todayKey;
 
-  // Loaded brief contents by date (also the edit buffer)
-  const [docs, setDocs] = React.useState<Record<string, string>>({});
-  const docsRef = React.useRef(docs);
-  React.useLayoutEffect(() => {
-    docsRef.current = docs;
-  });
-  const [failedDate, setFailedDate] = React.useState<string | null>(null);
-  const [reloadNonce, setReloadNonce] = React.useState(0);
+  // Briefs live in the local database (synced in the background). Days edited in this panel keep
+  // their text in `drafts`; other days show the live database copy, so a brief synced from
+  // another device appears as it arrives.
+  const { store } = useLocalData();
+  const liveBrief = useLocalBrief(projectId, viewDate);
+  const [drafts, setDrafts] = React.useState<Record<string, string>>({});
   const [unlockedDate, setUnlockedDate] = React.useState<string | null>(null);
   const [saveStatus, setSaveStatus] = React.useState<SaveStatus>("saved");
   const [isCalendarOpen, setIsCalendarOpen] = React.useState(false);
@@ -123,29 +119,12 @@ export function DailyBriefPanel({
   const saveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const briefDates = React.useMemo(() => new Set((briefs ?? []).map((b) => b.date)), [briefs]);
-  const isKnownEmpty = briefs !== null && !briefDates.has(viewDate);
-  const content: string | undefined = docs[viewDate] ?? (isKnownEmpty ? "" : undefined);
+  const content: string | undefined =
+    drafts[viewDate] ?? (liveBrief === undefined ? undefined : (liveBrief?.content ?? ""));
   const readOnly = !isToday && unlockedDate !== viewDate;
 
-  // Load the selected day (skipped when cached or when the index says the day has no brief)
-  React.useEffect(() => {
-    if (docsRef.current[viewDate] !== undefined || isKnownEmpty) return;
-    const controller = new AbortController();
-    fetch(`/api/projects/${projectId}/daily-briefs/${viewDate}`, { signal: controller.signal })
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
-      .then((data) => {
-        setDocs((prev) =>
-          prev[viewDate] !== undefined ? prev : { ...prev, [viewDate]: data.brief?.content ?? "" }
-        );
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) setFailedDate(viewDate);
-      });
-    return () => controller.abort();
-  }, [projectId, viewDate, isKnownEmpty, reloadNonce]);
-
   const flushSave = React.useCallback(
-    async (keepalive = false) => {
+    async () => {
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
         saveTimerRef.current = null;
@@ -155,17 +134,7 @@ export function DailyBriefPanel({
       pendingSaveRef.current = null;
       setSaveStatus("saving");
       try {
-        const res = await fetch(`/api/projects/${projectId}/daily-briefs/${pending.date}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content: pending.content }),
-          keepalive,
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        onSummaryChange(
-          pending.date,
-          pending.content.trim() ? summarizeBrief(pending.date, pending.content) : null
-        );
+        await store.saveBrief(projectId, pending.date, pending.content);
         if (!pendingSaveRef.current) setSaveStatus("saved");
       } catch (err) {
         console.error("Failed to save daily brief:", err);
@@ -174,14 +143,14 @@ export function DailyBriefPanel({
         setSaveStatus("error");
       }
     },
-    [projectId, onSummaryChange]
+    [projectId, store]
   );
 
   // Write pending edits when leaving the brief, the tab, or the page, or when asked to
   // (the work summary does this so it reads what was just typed)
   React.useEffect(() => {
     const onVisibilityChange = () => {
-      if (document.visibilityState === "hidden") flushSave(true);
+      if (document.visibilityState === "hidden") flushSave();
     };
     const onFlushRequest = (e: Event) => {
       (e as CustomEvent<Promise<void>[]>).detail.push(flushSave());
@@ -191,7 +160,7 @@ export function DailyBriefPanel({
     return () => {
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener(FLUSH_DAILY_BRIEFS_EVENT, onFlushRequest);
-      flushSave(true);
+      flushSave();
     };
   }, [flushSave]);
 
@@ -199,7 +168,7 @@ export function DailyBriefPanel({
     if (pendingSaveRef.current && pendingSaveRef.current.date !== viewDate) {
       flushSave();
     }
-    setDocs((prev) => ({ ...prev, [viewDate]: value }));
+    setDrafts((prev) => ({ ...prev, [viewDate]: value }));
     pendingSaveRef.current = { date: viewDate, content: value };
     setSaveStatus("unsaved");
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
@@ -234,7 +203,6 @@ export function DailyBriefPanel({
   const goToDate = (date: string) => {
     if (date > todayKey || date === viewDate) return;
     flushSave();
-    setFailedDate(null);
     setPinnedDate(date === todayKey ? null : date);
   };
 
@@ -271,13 +239,8 @@ export function DailyBriefPanel({
     if (!carryOverSource) return;
     setIsCarryingOver(true);
     try {
-      let source = docsRef.current[carryOverSource.date];
-      if (source === undefined) {
-        const res = await fetch(`/api/projects/${projectId}/daily-briefs/${carryOverSource.date}`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        source = ((await res.json()).brief?.content as string | undefined) ?? "";
-        setDocs((prev) => ({ ...prev, [carryOverSource.date]: source! }));
-      }
+      const source =
+        drafts[carryOverSource.date] ?? (await store.getBrief(projectId, carryOverSource.date))?.content ?? "";
       const lines = openTaskLines(source);
       if (lines.length === 0) return;
       const heading = `## Carried over from ${formatBriefDate(carryOverSource.date, "short")}`;
@@ -401,30 +364,12 @@ export function DailyBriefPanel({
       {/* Body */}
       <div className="flex-1 flex flex-col p-2 sm:p-6 relative overflow-hidden bg-white">
         {content === undefined ? (
-          failedDate === viewDate ? (
-            <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center p-6">
-              <AlertCircle className="w-8 h-8 text-red-400" />
-              <p className="text-sm font-bold text-gray-700">Couldn&apos;t load this brief</p>
-              <button
-                type="button"
-                onClick={() => {
-                  setFailedDate(null);
-                  setReloadNonce((n) => n + 1);
-                }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[#3B82F6] text-white text-xs font-bold cursor-pointer"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                Retry
-              </button>
-            </div>
-          ) : (
-            <div className="flex-1 rounded-xl bg-[#F8FAFC] p-5 space-y-3 animate-pulse" aria-busy="true">
-              <div className="h-6 w-1/3 rounded bg-gray-200" />
-              <div className="h-3.5 w-3/4 rounded bg-gray-200" />
-              <div className="h-3.5 w-2/3 rounded bg-gray-200" />
-              <div className="h-3.5 w-1/2 rounded bg-gray-200" />
-            </div>
-          )
+          <div className="flex-1 rounded-xl bg-[#F8FAFC] p-5 space-y-3 animate-pulse" aria-busy="true">
+            <div className="h-6 w-1/3 rounded bg-gray-200" />
+            <div className="h-3.5 w-3/4 rounded bg-gray-200" />
+            <div className="h-3.5 w-2/3 rounded bg-gray-200" />
+            <div className="h-3.5 w-1/2 rounded bg-gray-200" />
+          </div>
         ) : readOnly && content === "" ? (
           <div className="flex-1 flex flex-col items-center justify-center gap-2 text-center p-6 rounded-xl bg-[#F8FAFC]">
             <CalendarDays className="w-9 h-9 text-gray-300" />

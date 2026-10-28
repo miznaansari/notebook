@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { AIMagicButton } from "@/components/ui/ai-magic-button";
 import { briefToPoints, buildWorkSummary, formatBriefDate, toDateKey } from "@/lib/daily-brief";
 import { flushOpenDailyBriefs } from "./DailyBriefPanel";
+import { useLocalData } from "@/lib/local-db/context";
 
 // The edited summary survives closing the dialog; one draft per day, kept in this browser only
 const draftKey = (date: string) => `notepad:workSummaryDraft:${date}`;
@@ -38,6 +39,7 @@ interface WorkSummaryDialogProps {
 //   - point
 // Mounted only while open, so every open starts from fresh data.
 export function WorkSummaryDialog({ onClose }: WorkSummaryDialogProps) {
+  const { db, sync } = useLocalData();
   const [today] = React.useState(() => toDateKey(new Date()));
   const [status, setStatus] = React.useState<"loading" | "ready" | "error">("loading");
   const [generated, setGenerated] = React.useState("");
@@ -51,10 +53,23 @@ export function WorkSummaryDialog({ onClose }: WorkSummaryDialogProps) {
     const controller = new AbortController();
     (async () => {
       try {
+        // Save what's being typed, and give a sync a moment to bring in other devices' briefs
+        // (offline, or if the server is slow, the summary uses what this device has)
         await flushOpenDailyBriefs();
-        const res = await fetch(`/api/daily-briefs/summary?date=${today}`, { signal: controller.signal });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data: { projects: { projectName: string; content: string }[] } = await res.json();
+        await Promise.race([sync.syncNow(), new Promise((resolve) => setTimeout(resolve, 3000))]);
+        if (controller.signal.aborted) return;
+
+        const [briefs, projects] = await Promise.all([
+          db.briefs.where("date").equals(today).toArray(),
+          db.projects.toArray(),
+        ]);
+        const contentByProject = new Map(briefs.filter((b) => b.content.trim()).map((b) => [b.projectId, b.content]));
+        const data = {
+          projects: projects
+            .filter((p) => contentByProject.has(p.id))
+            .sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0))
+            .map((p) => ({ projectName: p.name, content: contentByProject.get(p.id)! })),
+        };
 
         const summary = buildWorkSummary(data.projects);
         setGenerated(summary);
@@ -72,7 +87,7 @@ export function WorkSummaryDialog({ onClose }: WorkSummaryDialogProps) {
       }
     })();
     return () => controller.abort();
-  }, [today, reloadNonce]);
+  }, [today, reloadNonce, db, sync]);
 
   const updateText = (value: string) => {
     setText(value);

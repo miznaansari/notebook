@@ -7,6 +7,7 @@ import { BookOpen, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
+import { rememberUser } from "@/lib/local-db/db";
 
 function LoginForm() {
   const router = useRouter();
@@ -34,6 +35,7 @@ function LoginForm() {
 
       const data = await res.json();
       if (res.ok) {
+        if (data.user) rememberUser(data.user);
         toast.success("Welcome back!");
         router.push(redirectPath);
         router.refresh();
